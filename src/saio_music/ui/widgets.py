@@ -10,21 +10,22 @@ from PySide6 import QtCore, QtGui, QtWidgets
 class KeyWheelWidget(QtWidgets.QWidget):
     def __init__(self, parent: QtWidgets.QWidget | None = None) -> None:
         super().__init__(parent)
-        self.setMinimumSize(180, 180)
+        self.setMinimumSize(190, 190)
         self._colors = [
-            "#5ad0ff",
-            "#47b3ff",
-            "#3b90ff",
-            "#5e76ff",
-            "#8a6bff",
-            "#b366ff",
-            "#d266ff",
-            "#f35cb8",
-            "#ff6b7a",
-            "#ff8a5c",
-            "#ffb74b",
-            "#ffd84b",
+            "#f8d84b",
+            "#f6b447",
+            "#f38d4a",
+            "#ef6b5f",
+            "#e85f7c",
+            "#d364a5",
+            "#a76bd6",
+            "#7c7be8",
+            "#5a8fe9",
+            "#52a9e6",
+            "#57c7e8",
+            "#6fe2e0",
         ]
+        self._order = [12, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
 
     def paintEvent(self, event: QtGui.QPaintEvent) -> None:  # noqa: N802
         painter = QtGui.QPainter(self)
@@ -32,18 +33,73 @@ class KeyWheelWidget(QtWidgets.QWidget):
 
         size = min(self.width(), self.height())
         rect = QtCore.QRectF(6, 6, size - 12, size - 12)
-        span = 360 / len(self._colors)
+        span = 360 / 12
         start = 90
         painter.setPen(QtCore.Qt.NoPen)
-        for index, color in enumerate(self._colors):
-            painter.setBrush(QtGui.QColor(color))
-            angle = start - (index * span)
-            painter.drawPie(rect, int(angle * 16), int(-span * 16))
 
-        inner_margin = rect.width() * 0.26
+        outer_margin = rect.width() * 0.06
+        outer = rect.adjusted(outer_margin, outer_margin, -outer_margin, -outer_margin)
+        inner_margin = rect.width() * 0.22
         inner = rect.adjusted(inner_margin, inner_margin, -inner_margin, -inner_margin)
-        painter.setBrush(QtGui.QColor("#f3f6fb"))
-        painter.drawEllipse(inner)
+        core_margin = rect.width() * 0.42
+        core = rect.adjusted(core_margin, core_margin, -core_margin, -core_margin)
+
+        for index, _key_num in enumerate(self._order):
+            angle = start - (index * span)
+            outer_color = QtGui.QColor(self._colors[index])
+            inner_color = outer_color.lighter(115)
+            painter.setBrush(outer_color)
+            painter.drawPie(outer, int(angle * 16), int(-span * 16))
+            painter.setBrush(inner_color)
+            painter.drawPie(inner, int(angle * 16), int(-span * 16))
+
+        painter.setBrush(QtGui.QColor("#f4f7fb"))
+        painter.drawEllipse(core)
+
+        self._draw_labels(painter, outer, inner, start, span)
+
+    def _draw_labels(
+        self,
+        painter: QtGui.QPainter,
+        outer: QtCore.QRectF,
+        inner: QtCore.QRectF,
+        start: float,
+        span: float,
+    ) -> None:
+        painter.save()
+        painter.setPen(QtGui.QPen(QtGui.QColor("#0f172a")))
+        outer_radius = outer.width() * 0.5
+        inner_radius = inner.width() * 0.5
+        center = outer.center()
+        outer_font = QtGui.QFont("Bahnschrift", 8, QtGui.QFont.Bold)
+        inner_font = QtGui.QFont("Bahnschrift", 8)
+
+        for index, key_num in enumerate(self._order):
+            angle_deg = start - (index * span) - (span / 2)
+            angle = math.radians(angle_deg)
+            outer_pos = QtCore.QPointF(
+                center.x() + math.cos(angle) * (outer_radius * 0.82),
+                center.y() - math.sin(angle) * (outer_radius * 0.82),
+            )
+            inner_pos = QtCore.QPointF(
+                center.x() + math.cos(angle) * (inner_radius * 0.82),
+                center.y() - math.sin(angle) * (inner_radius * 0.82),
+            )
+
+            painter.setFont(outer_font)
+            self._draw_text(painter, outer_pos, f"{key_num}B")
+            painter.setFont(inner_font)
+            self._draw_text(painter, inner_pos, f"{key_num}A")
+
+        painter.restore()
+
+    def _draw_text(
+        self, painter: QtGui.QPainter, position: QtCore.QPointF, text: str
+    ) -> None:
+        metrics = QtGui.QFontMetrics(painter.font())
+        rect = metrics.boundingRect(text)
+        rect.moveCenter(QtCore.QPoint(int(position.x()), int(position.y())))
+        painter.drawText(rect, QtCore.Qt.AlignCenter, text)
 
 
 class WaveformWidget(QtWidgets.QWidget):
