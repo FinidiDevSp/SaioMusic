@@ -10,7 +10,7 @@ readme = "README.md"
 requires-python = ">=3.11"
 license = { file = "LICENSE" }
 authors = [
-  { name = "Saio" }
+  { name = "FinidiDevSp" }
 ]
 keywords = ["music", "player", "audio"]
 classifiers = [
@@ -53,3 +53,6 @@ no_implicit_optional = true
 [tool.pytest.ini_options]
 addopts = "-q"
 testpaths = ["tests"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/saio_music"]

@@ -2,8 +2,8 @@
 
 Reproductor de musica personalizable enfocado en productividad, coleccion y flujo rapido.
 
-![CI](https://github.com/tu-usuario/saiomusic/actions/workflows/ci.yml/badge.svg)
-![Release](https://github.com/tu-usuario/saiomusic/actions/workflows/release-please.yml/badge.svg)
+![CI](https://github.com/FinidiDevSp/SaioMusic/actions/workflows/ci.yml/badge.svg?branch=master)
+![Release](https://github.com/FinidiDevSp/SaioMusic/actions/workflows/release-please.yml/badge.svg?branch=master)
 
 ## Vision
 
