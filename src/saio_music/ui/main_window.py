@@ -2,6 +2,11 @@
 
 from __future__ import annotations
 
+import base64
+import json
+from pathlib import Path
+
+from mutagen import File as MutagenFile
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from saio_music.ui.widgets import KeyWheelWidget, WaveformWidget
@@ -18,12 +23,12 @@ def _make_chip(text: str, bg: str, fg: str = "#0f172a") -> QtWidgets.QLabel:
 
 
 def _make_cover_pixmap(color: str) -> QtGui.QPixmap:
-    pixmap = QtGui.QPixmap(36, 36)
+    pixmap = QtGui.QPixmap(30, 30)
     pixmap.fill(QtGui.QColor(color))
     painter = QtGui.QPainter(pixmap)
     painter.setRenderHint(QtGui.QPainter.Antialiasing)
     painter.setPen(QtGui.QColor("#ffffff"))
-    painter.drawRect(4, 4, 28, 28)
+    painter.drawRect(3, 3, 24, 24)
     painter.end()
     return pixmap
 
@@ -37,6 +42,11 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self.setFont(QtGui.QFont("Bahnschrift", 10))
         self.setStyleSheet(self._build_styles())
+
+        self._tracks_table: QtWidgets.QTableWidget | None = None
+        self._tracks_count: QtWidgets.QLabel | None = None
+        self._tags_cache = self._load_cache()
+        self._cache_dirty = False
 
         central = QtWidgets.QWidget()
         root = QtWidgets.QVBoxLayout(central)
@@ -115,6 +125,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         add_tracks = QtWidgets.QPushButton("ADD TRACKS")
         add_tracks.setObjectName("primaryButton")
+        add_tracks.clicked.connect(self._select_tracks_folder)
         layout.addWidget(add_tracks)
 
         section = QtWidgets.QVBoxLayout()
@@ -237,137 +248,440 @@ class MainWindow(QtWidgets.QMainWindow):
         search.setObjectName("searchInput")
         search_row.addWidget(search, 1)
         search_row.addStretch(1)
-        search_row.addWidget(QtWidgets.QLabel("12 TRACKS"))
+        tracks_label = QtWidgets.QLabel("0 TRACKS")
+        search_row.addWidget(tracks_label)
         layout.addLayout(search_row)
 
-        table = QtWidgets.QTableWidget(12, 9)
+        table = QtWidgets.QTableWidget(0, 7)
         table.setHorizontalHeaderLabels(
             [
                 "COVER ART",
                 "ARTIST",
                 "TITLE",
+                "LABEL",
                 "TEMPO",
                 "KEY RESULT",
                 "ENERGY",
-                "CUE POINTS",
-                "STATUS",
-                "RATING",
             ]
         )
         table.verticalHeader().setVisible(False)
         table.setEditTriggers(QtWidgets.QAbstractItemView.NoEditTriggers)
         table.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectRows)
+        table.setSelectionMode(QtWidgets.QAbstractItemView.SingleSelection)
         table.setAlternatingRowColors(True)
         table.setShowGrid(False)
-        table.setSortingEnabled(False)
+        table.setSortingEnabled(True)
         table.setObjectName("tracksTable")
+        table.setIconSize(QtCore.QSize(30, 30))
+        table.setColumnWidth(0, 44)
+        table.cellClicked.connect(self._clear_track_selection)
+        table.cellDoubleClicked.connect(self._select_track_row)
 
-        data = [
-            ("Chef Faker", "Gold", "140", "2A", "5", "8", "Completed", "#8fe4ff"),
-            (
-                "Porter Robinson",
-                "Look at the Sky",
-                "115",
-                "2B",
-                "5",
-                "8",
-                "Completed",
-                "#7dd3fc",
-            ),
-            (
-                "Gryffin & Illenium",
-                "Feel Good",
-                "138",
-                "10B",
-                "7",
-                "8",
-                "Completed",
-                "#a5b4fc",
-            ),
-            (
-                "Dua Lipa",
-                "Don't Start Now",
-                "124",
-                "10A",
-                "7",
-                "8",
-                "Completed",
-                "#c4b5fd",
-            ),
-            (
-                "Juice WRLD",
-                "Lucid Dreams",
-                "112",
-                "11A",
-                "5",
-                "8",
-                "Completed",
-                "#bae6fd",
-            ),
-            (
-                "Travis Scott",
-                "Highest in the Room",
-                "153",
-                "7A",
-                "6",
-                "8",
-                "Completed",
-                "#f9a8d4",
-            ),
-            (
-                "David Guetta x MORTEN",
-                "Kill Me Slow",
-                "126",
-                "11A",
-                "8",
-                "8",
-                "Completed",
-                "#bae6fd",
-            ),
-            (
-                "Machine Gun Kelly",
-                "Bloody Valentine",
-                "80",
-                "11A",
-                "7",
-                "8",
-                "Completed",
-                "#bae6fd",
-            ),
-            (
-                "Sofi Tukker",
-                "Swing",
-                "118",
-                "4A",
-                "5",
-                "8",
-                "Completed",
-                "#fde68a",
-            ),
-            (
-                "Daft Punk",
-                "Digital Love",
-                "125",
-                "11B",
-                "6",
-                "6",
-                "Completed",
-                "#8fe4ff",
-            ),
-            (
-                "Masked Wolf",
-                "Astronaut in the Ocean",
-                "150",
-                "11A",
-                "6",
-                "7",
-                "Completed",
-                "#bae6fd",
-            ),
-            ("SG Lewis", "Chemicals", "122", "2A", "6", "8", "Completed", "#8fe4ff"),
-        ]
+        table.horizontalHeader().setSectionResizeMode(
+            0, QtWidgets.QHeaderView.ResizeToContents
+        )
+        table.horizontalHeader().setSectionResizeMode(1, QtWidgets.QHeaderView.Stretch)
+        table.horizontalHeader().setSectionResizeMode(2, QtWidgets.QHeaderView.Stretch)
+        table.horizontalHeader().setSectionResizeMode(3, QtWidgets.QHeaderView.Stretch)
+        table.horizontalHeader().setSectionResizeMode(
+            4, QtWidgets.QHeaderView.ResizeToContents
+        )
+        table.horizontalHeader().setSectionResizeMode(
+            5, QtWidgets.QHeaderView.ResizeToContents
+        )
+        table.horizontalHeader().setSectionResizeMode(
+            6, QtWidgets.QHeaderView.ResizeToContents
+        )
 
-        cover_colors = [
+        layout.addWidget(table, 1)
+        self._tracks_table = table
+        self._tracks_count = tracks_label
+        return wrapper
+
+    def _select_tracks_folder(self) -> None:
+        default_dir = self._load_last_folder() or str(Path.cwd())
+        folder = QtWidgets.QFileDialog.getExistingDirectory(
+            self, "Select music folder", default_dir
+        )
+        if not folder:
+            return
+        self._save_last_folder(Path(folder))
+        self._load_tracks(Path(folder))
+
+    def _load_tracks(self, folder: Path) -> None:
+        if self._tracks_table is None:
+            return
+
+        supported = {".mp3", ".flac", ".wav", ".m4a", ".ogg", ".aac"}
+        progress = QtWidgets.QProgressDialog("Scanning folder...", "Cancel", 0, 0, self)
+        progress.setWindowTitle("Loading tracks")
+        progress.setWindowModality(QtCore.Qt.WindowModal)
+        progress.setAutoClose(False)
+        progress.setMinimumDuration(0)
+        progress.show()
+
+        files: list[Path] = []
+        canceled = False
+        try:
+            for path in folder.rglob("*"):
+                if progress.wasCanceled():
+                    canceled = True
+                    break
+                if path.is_file() and path.suffix.lower() in supported:
+                    files.append(path)
+                if len(files) % 200 == 0:
+                    QtWidgets.QApplication.processEvents()
+
+            if canceled:
+                return
+
+            files.sort(key=lambda item: item.name.lower())
+
+            progress.setLabelText("Loading tracks...")
+            progress.setMaximum(len(files))
+            progress.setValue(0)
+
+            sorting_enabled = self._tracks_table.isSortingEnabled()
+            self._tracks_table.setSortingEnabled(False)
+            self._tracks_table.setRowCount(0)
+            for index, path in enumerate(files, start=1):
+                if progress.wasCanceled():
+                    canceled = True
+                    break
+                self._add_track_row(path)
+                progress.setValue(index)
+                if index % 50 == 0:
+                    QtWidgets.QApplication.processEvents()
+
+            self._tracks_table.setSortingEnabled(sorting_enabled)
+        finally:
+            progress.close()
+            self._save_cache()
+            self._update_tracks_count()
+
+    def _select_track_row(self, row: int, column: int) -> None:
+        if self._tracks_table is None:
+            return
+        self._tracks_table.clearSelection()
+        self._tracks_table.selectRow(row)
+
+    def _clear_track_selection(self, row: int, column: int) -> None:
+        if self._tracks_table is None:
+            return
+        self._tracks_table.clearSelection()
+
+    def _update_tracks_count(self) -> None:
+        if self._tracks_table is None or self._tracks_count is None:
+            return
+        self._tracks_count.setText(f"{self._tracks_table.rowCount()} TRACKS")
+
+    def _load_last_folder(self) -> str | None:
+        env_path = Path.cwd() / ".env"
+        if not env_path.exists():
+            return None
+        try:
+            content = env_path.read_text(encoding="utf-8")
+        except OSError:
+            return None
+        for line in content.splitlines():
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, value = line.split("=", 1)
+            if key.strip() == "LAST_MUSIC_FOLDER":
+                return value.strip().strip('"').strip("'")
+        return None
+
+    def _save_last_folder(self, folder: Path) -> None:
+        env_path = Path.cwd() / ".env"
+        existing: list[str] = []
+        if env_path.exists():
+            try:
+                existing = env_path.read_text(encoding="utf-8").splitlines()
+            except OSError:
+                existing = []
+
+        updated = False
+        output: list[str] = []
+        for line in existing:
+            if line.strip().startswith("LAST_MUSIC_FOLDER="):
+                output.append(f"LAST_MUSIC_FOLDER={folder}")
+                updated = True
+            else:
+                output.append(line)
+
+        if not updated:
+            output.append(f"LAST_MUSIC_FOLDER={folder}")
+
+        try:
+            env_path.write_text("\n".join(output) + "\n", encoding="utf-8")
+        except OSError:
+            return
+
+    def _add_track_row(self, path: Path) -> None:
+        if self._tracks_table is None:
+            return
+
+        tags = self._read_tags(path)
+        row = self._tracks_table.rowCount()
+        self._tracks_table.insertRow(row)
+        self._tracks_table.setRowHeight(row, 36)
+
+        cover_item = QtWidgets.QTableWidgetItem()
+        cover_data = tags.get("cover_data")
+        if not isinstance(cover_data, bytes):
+            cover_data = None
+        cover_icon = self._cover_icon(cover_data, row)
+        cover_item.setIcon(cover_icon)
+        self._tracks_table.setItem(row, 0, cover_item)
+
+        artist = tags.get("artist") or path.stem
+        title = tags.get("title") or ""
+        label = tags.get("label") or ""
+        tempo = tags.get("bpm") or ""
+        key_result = tags.get("comments") or ""
+        energy = "0"
+
+        self._tracks_table.setItem(row, 1, QtWidgets.QTableWidgetItem(artist))
+        self._tracks_table.setItem(row, 2, QtWidgets.QTableWidgetItem(title))
+        self._tracks_table.setItem(row, 3, QtWidgets.QTableWidgetItem(label))
+        self._tracks_table.setItem(row, 4, QtWidgets.QTableWidgetItem(tempo))
+
+        key_item = QtWidgets.QTableWidgetItem(key_result)
+        key_item.setTextAlignment(QtCore.Qt.AlignCenter)
+        self._tracks_table.setItem(row, 5, key_item)
+
+        energy_item = QtWidgets.QTableWidgetItem(energy)
+        energy_item.setTextAlignment(QtCore.Qt.AlignCenter)
+        self._tracks_table.setItem(row, 6, energy_item)
+
+    def _read_tags(self, path: Path) -> dict[str, str | bytes | None]:
+        cached = self._get_cached_tags(path)
+        if cached is not None:
+            return cached
+
+        info: dict[str, str | bytes | None] = {
+            "artist": None,
+            "title": None,
+            "label": None,
+            "bpm": None,
+            "comments": None,
+            "cover_data": None,
+        }
+
+        try:
+            audio = MutagenFile(path, easy=True)
+        except Exception:
+            audio = None
+        if audio is not None:
+            info["artist"] = self._first_tag(audio, ["artist"])
+            info["title"] = self._first_tag(audio, ["title"])
+            info["label"] = self._first_tag(
+                audio, ["label", "organization", "publisher"]
+            )
+            info["bpm"] = self._first_tag(audio, ["bpm", "tbpm"])
+            info["comments"] = self._first_tag(audio, ["comment", "comments"])
+
+        try:
+            audio_full = MutagenFile(path)
+        except Exception:
+            audio_full = None
+        if audio_full is not None:
+            if not info["comments"]:
+                info["comments"] = self._extract_comment(audio_full)
+            info["cover_data"] = self._extract_cover(audio_full)
+
+        self._store_cached_tags(path, info)
+        return info
+
+    def _get_cached_tags(self, path: Path) -> dict[str, str | bytes | None] | None:
+        key = self._cache_key(path)
+        entry = self._tags_cache.get(key)
+        if not isinstance(entry, dict):
+            return None
+        try:
+            mtime_ns = path.stat().st_mtime_ns
+        except OSError:
+            return None
+        if entry.get("mtime_ns") != mtime_ns:
+            return None
+
+        cover_data = entry.get("cover_data")
+        cover_bytes = None
+        if isinstance(cover_data, str):
+            try:
+                cover_bytes = base64.b64decode(cover_data)
+            except Exception:
+                cover_bytes = None
+
+        return {
+            "artist": self._coerce_text(entry.get("artist")),
+            "title": self._coerce_text(entry.get("title")),
+            "label": self._coerce_text(entry.get("label")),
+            "bpm": self._coerce_text(entry.get("bpm")),
+            "comments": self._coerce_text(entry.get("comments")),
+            "cover_data": cover_bytes,
+        }
+
+    def _store_cached_tags(
+        self, path: Path, info: dict[str, str | bytes | None]
+    ) -> None:
+        try:
+            mtime_ns = path.stat().st_mtime_ns
+        except OSError:
+            return
+
+        cover_data = info.get("cover_data")
+        cover_encoded = None
+        if isinstance(cover_data, bytes) and len(cover_data) <= 200_000:
+            cover_encoded = base64.b64encode(cover_data).decode("ascii")
+
+        self._tags_cache[self._cache_key(path)] = {
+            "mtime_ns": mtime_ns,
+            "artist": info.get("artist"),
+            "title": info.get("title"),
+            "label": info.get("label"),
+            "bpm": info.get("bpm"),
+            "comments": info.get("comments"),
+            "cover_data": cover_encoded,
+        }
+        self._cache_dirty = True
+
+    def _cache_key(self, path: Path) -> str:
+        return str(path.resolve())
+
+    def _first_tag(self, audio: object, keys: list[str]) -> str | None:
+        for key in keys:
+            value = getattr(audio, "tags", {}).get(key)
+            if not value:
+                continue
+            if isinstance(value, list | tuple):
+                return str(value[0])
+            return str(value)
+        return None
+
+    def _extract_cover(self, audio: object) -> bytes | None:
+        if audio is None:
+            return None
+        tags = getattr(audio, "tags", None)
+        if tags is None:
+            return None
+
+        if hasattr(tags, "getall"):
+            apic = tags.getall("APIC")
+            if apic:
+                return apic[0].data
+
+        for key in list(tags.keys()):
+            if str(key).startswith("APIC"):
+                frame = tags[key]
+                data = getattr(frame, "data", None)
+                if isinstance(data, bytes | bytearray):
+                    return bytes(data)
+
+        pictures = getattr(audio, "pictures", None)
+        if pictures:
+            return pictures[0].data
+
+        covr = tags.get("covr")
+        if covr:
+            try:
+                return bytes(covr[0])
+            except (IndexError, TypeError):
+                return None
+
+        for key in ("metadata_block_picture", "METADATA_BLOCK_PICTURE"):
+            if key in tags:
+                value = tags[key]
+                if isinstance(value, list | tuple) and value:
+                    return self._coerce_bytes(value[0])
+                if isinstance(value, bytes):
+                    return value
+
+        return None
+
+    def _extract_comment(self, audio: object) -> str | None:
+        tags = getattr(audio, "tags", None)
+        if tags is None:
+            return None
+
+        for key in ("comment", "comments", "COMMENT"):
+            comment = self._coerce_text(tags.get(key))
+            if comment:
+                return comment
+
+        comment = self._coerce_text(tags.get("\xa9cmt"))
+        if comment:
+            return comment
+
+        for key in list(tags.keys()):
+            if str(key).startswith("COMM"):
+                frame = tags[key]
+                text = getattr(frame, "text", None)
+                if text:
+                    return str(text[0])
+
+        return None
+
+    def _coerce_text(self, value: object) -> str | None:
+        if value is None:
+            return None
+        if isinstance(value, list | tuple):
+            if not value:
+                return None
+            value = value[0]
+        if isinstance(value, bytes):
+            try:
+                return value.decode("utf-8", errors="ignore").strip() or None
+            except Exception:
+                return None
+        return str(value).strip() or None
+
+    def _coerce_bytes(self, value: object) -> bytes | None:
+        if isinstance(value, bytes):
+            return value
+        if isinstance(value, bytearray):
+            return bytes(value)
+        if isinstance(value, str):
+            try:
+                return base64.b64decode(value)
+            except Exception:
+                return None
+        return None
+
+    def _load_cache(self) -> dict[str, dict[str, object]]:
+        cache_path = Path.cwd() / ".saiomusic_cache.json"
+        if not cache_path.exists():
+            return {}
+        try:
+            data = json.loads(cache_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return {}
+        if isinstance(data, dict):
+            return data
+        return {}
+
+    def _save_cache(self) -> None:
+        if not self._cache_dirty:
+            return
+        cache_path = Path.cwd() / ".saiomusic_cache.json"
+        try:
+            cache_path.write_text(
+                json.dumps(self._tags_cache, ensure_ascii=True), encoding="utf-8"
+            )
+            self._cache_dirty = False
+        except OSError:
+            return
+
+    def _cover_icon(self, cover_data: bytes | None, row: int) -> QtGui.QIcon:
+        if cover_data:
+            image = QtGui.QImage.fromData(cover_data)
+            if not image.isNull():
+                pixmap = QtGui.QPixmap.fromImage(image).scaled(
+                    30, 30, QtCore.Qt.KeepAspectRatio, QtCore.Qt.SmoothTransformation
+                )
+                return QtGui.QIcon(pixmap)
+
+        fallback_colors = [
             "#e2e8f0",
             "#cbd5f5",
             "#fecaca",
@@ -381,61 +695,8 @@ class MainWindow(QtWidgets.QMainWindow):
             "#fca5a5",
             "#ddd6fe",
         ]
-
-        for row, entry in enumerate(data):
-            artist, title, tempo, key, energy, cue_points, status, key_color = entry
-            cover_item = QtWidgets.QTableWidgetItem()
-            cover_item.setIcon(QtGui.QIcon(_make_cover_pixmap(cover_colors[row])))
-            table.setItem(row, 0, cover_item)
-            table.setItem(row, 1, QtWidgets.QTableWidgetItem(artist))
-            table.setItem(row, 2, QtWidgets.QTableWidgetItem(title))
-            table.setItem(row, 3, QtWidgets.QTableWidgetItem(tempo))
-
-            key_item = QtWidgets.QTableWidgetItem(key)
-            key_item.setBackground(QtGui.QColor(key_color))
-            key_item.setTextAlignment(QtCore.Qt.AlignCenter)
-            table.setItem(row, 4, key_item)
-
-            energy_item = QtWidgets.QTableWidgetItem(energy)
-            energy_item.setTextAlignment(QtCore.Qt.AlignCenter)
-            table.setItem(row, 5, energy_item)
-
-            cue_item = QtWidgets.QTableWidgetItem(cue_points)
-            cue_item.setTextAlignment(QtCore.Qt.AlignCenter)
-            table.setItem(row, 6, cue_item)
-
-            status_item = QtWidgets.QTableWidgetItem(status)
-            status_item.setTextAlignment(QtCore.Qt.AlignCenter)
-            table.setItem(row, 7, status_item)
-
-            table.setItem(row, 8, QtWidgets.QTableWidgetItem("o o o"))
-
-        table.horizontalHeader().setSectionResizeMode(
-            0, QtWidgets.QHeaderView.ResizeToContents
-        )
-        table.horizontalHeader().setSectionResizeMode(1, QtWidgets.QHeaderView.Stretch)
-        table.horizontalHeader().setSectionResizeMode(2, QtWidgets.QHeaderView.Stretch)
-        table.horizontalHeader().setSectionResizeMode(
-            3, QtWidgets.QHeaderView.ResizeToContents
-        )
-        table.horizontalHeader().setSectionResizeMode(
-            4, QtWidgets.QHeaderView.ResizeToContents
-        )
-        table.horizontalHeader().setSectionResizeMode(
-            5, QtWidgets.QHeaderView.ResizeToContents
-        )
-        table.horizontalHeader().setSectionResizeMode(
-            6, QtWidgets.QHeaderView.ResizeToContents
-        )
-        table.horizontalHeader().setSectionResizeMode(
-            7, QtWidgets.QHeaderView.ResizeToContents
-        )
-        table.horizontalHeader().setSectionResizeMode(
-            8, QtWidgets.QHeaderView.ResizeToContents
-        )
-
-        layout.addWidget(table, 1)
-        return wrapper
+        pixmap = _make_cover_pixmap(fallback_colors[row % len(fallback_colors)])
+        return QtGui.QIcon(pixmap)
 
     def _build_styles(self) -> str:
         return """
@@ -447,6 +708,9 @@ class MainWindow(QtWidgets.QMainWindow):
         #topBar {
             background: #f7fbff;
             border-radius: 10px;
+        }
+        QAbstractButton {
+            cursor: pointinghand;
         }
         QPushButton[tab="true"] {
             background: transparent;
@@ -511,6 +775,9 @@ class MainWindow(QtWidgets.QMainWindow):
             alternate-background-color: #f8fbff;
             selection-background-color: #e0f2fe;
             selection-color: #0f172a;
+        }
+        #tracksTable::item:hover {
+            background: transparent;
         }
         #tracksTable QHeaderView::section {
             background: #f1f5f9;
