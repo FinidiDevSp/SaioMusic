@@ -5,9 +5,13 @@ from __future__ import annotations
 import base64
 import json
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from mutagen import File as MutagenFile
-from PySide6 import QtCore, QtGui, QtWidgets
+from PySide6 import QtCore, QtGui, QtMultimedia, QtWidgets
+
+if TYPE_CHECKING:
+    import numpy as np
 
 from saio_music.ui.widgets import KeyWheelWidget, WaveformWidget
 
@@ -43,10 +47,22 @@ class MainWindow(QtWidgets.QMainWindow):
         self.setFont(QtGui.QFont("Bahnschrift", 10))
         self.setStyleSheet(self._build_styles())
 
+        self._player = QtMultimedia.QMediaPlayer(self)
+        self._audio_output = QtMultimedia.QAudioOutput(self)
+        self._player.setAudioOutput(self._audio_output)
+
         self._tracks_table: QtWidgets.QTableWidget | None = None
         self._tracks_count: QtWidgets.QLabel | None = None
         self._tags_cache = self._load_cache()
         self._cache_dirty = False
+        self._waveform_widget: WaveformWidget | None = None
+        self._track_title: QtWidgets.QLabel | None = None
+        self._time_label: QtWidgets.QLabel | None = None
+        self._waveform_status: QtWidgets.QLabel | None = None
+        self._key_chip: QtWidgets.QLabel | None = None
+        self._bpm_chip: QtWidgets.QLabel | None = None
+        self._energy_chip: QtWidgets.QLabel | None = None
+        self._duration_ms = 0
 
         central = QtWidgets.QWidget()
         root = QtWidgets.QVBoxLayout(central)
@@ -62,6 +78,8 @@ class MainWindow(QtWidgets.QMainWindow):
         root.addLayout(content, 1)
 
         self.setCentralWidget(central)
+        self._player.positionChanged.connect(self._on_position_changed)
+        self._player.durationChanged.connect(self._on_duration_changed)
 
     def _build_top_bar(self) -> QtWidgets.QWidget:
         bar = QtWidgets.QWidget()
@@ -176,6 +194,7 @@ class MainWindow(QtWidgets.QMainWindow):
         controls = QtWidgets.QVBoxLayout()
         play = QtWidgets.QPushButton(">")
         play.setObjectName("playButton")
+        play.clicked.connect(self._toggle_playback)
         controls.addWidget(play)
         controls.addSpacing(6)
         nav = QtWidgets.QHBoxLayout()
@@ -190,16 +209,12 @@ class MainWindow(QtWidgets.QMainWindow):
         controls_widget.setLayout(controls)
 
         waveform_column = QtWidgets.QVBoxLayout()
-        cues = QtWidgets.QHBoxLayout()
-        for idx in range(1, 7):
-            cue = QtWidgets.QLabel(f"CUE {idx}")
-            cue.setObjectName("cueLabel")
-            cues.addWidget(cue)
-        cues.addStretch(1)
-        waveform_column.addLayout(cues)
-        waveform_column.addWidget(WaveformWidget())
+        waveform = WaveformWidget()
+        waveform.seekRequested.connect(self._seek_to_ratio)
+        waveform_column.addWidget(waveform)
         waveform_widget = QtWidgets.QWidget()
         waveform_widget.setLayout(waveform_column)
+        self._waveform_widget = waveform
 
         top_row.addWidget(controls_widget)
         top_row.addSpacing(10)
@@ -208,31 +223,39 @@ class MainWindow(QtWidgets.QMainWindow):
         layout.addLayout(top_row)
 
         time_row = QtWidgets.QHBoxLayout()
+        waveform_status = QtWidgets.QLabel("")
+        waveform_status.setObjectName("waveformStatus")
+        waveform_status.setVisible(False)
+        time_row.addWidget(waveform_status)
         time_row.addStretch(1)
-        time_row.addWidget(QtWidgets.QLabel("00:00 / 04:00"))
+        time_label = QtWidgets.QLabel("00:00 / 00:00")
+        time_row.addWidget(time_label)
+        self._time_label = time_label
+        self._waveform_status = waveform_status
         layout.addLayout(time_row)
 
-        title = QtWidgets.QLabel("Daft Punk - Digital Love")
+        title = QtWidgets.QLabel("No track selected")
         title.setStyleSheet("font-size: 18px; font-weight: 600;")
         layout.addWidget(title)
+        self._track_title = title
 
         info_row = QtWidgets.QHBoxLayout()
         info_row.setSpacing(8)
         info_row.addWidget(QtWidgets.QLabel("KEY"))
-        info_row.addWidget(_make_chip("11B", "#8fe4ff", "#075985"))
+        key_chip = _make_chip("--", "#8fe4ff", "#075985")
+        info_row.addWidget(key_chip)
         info_row.addWidget(QtWidgets.QLabel("ENERGY"))
-        info_row.addWidget(_make_chip("6", "#e2e8f0", "#0f172a"))
+        energy_chip = _make_chip("0", "#e2e8f0", "#0f172a")
+        info_row.addWidget(energy_chip)
         info_row.addWidget(QtWidgets.QLabel("BPM"))
-        info_row.addWidget(_make_chip("125", "#e2e8f0", "#0f172a"))
-        info_row.addSpacing(10)
-        info_row.addWidget(QtWidgets.QLabel("CUE POINTS"))
-        info_row.addWidget(_make_chip("8", "#dbeafe", "#1d4ed8"))
-        add_cue = QtWidgets.QPushButton("ADD CUE")
-        add_cue.setObjectName("ghostButton")
-        info_row.addWidget(add_cue)
+        bpm_chip = _make_chip("--", "#e2e8f0", "#0f172a")
+        info_row.addWidget(bpm_chip)
         info_row.addStretch(1)
         info_row.addWidget(QtWidgets.QLabel("VIRTUAL PIANO"))
         layout.addLayout(info_row)
+        self._key_chip = key_chip
+        self._energy_chip = energy_chip
+        self._bpm_chip = bpm_chip
 
         return panel
 
@@ -267,7 +290,7 @@ class MainWindow(QtWidgets.QMainWindow):
         table.verticalHeader().setVisible(False)
         table.setEditTriggers(QtWidgets.QAbstractItemView.NoEditTriggers)
         table.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectRows)
-        table.setSelectionMode(QtWidgets.QAbstractItemView.SingleSelection)
+        table.setSelectionMode(QtWidgets.QAbstractItemView.NoSelection)
         table.setAlternatingRowColors(True)
         table.setShowGrid(False)
         table.setSortingEnabled(True)
@@ -363,17 +386,235 @@ class MainWindow(QtWidgets.QMainWindow):
         if self._tracks_table is None:
             return
         self._tracks_table.clearSelection()
-        self._tracks_table.selectRow(row)
+        self._play_track_for_row(row)
 
     def _clear_track_selection(self, row: int, column: int) -> None:
         if self._tracks_table is None:
             return
         self._tracks_table.clearSelection()
 
+    def _play_track_for_row(self, row: int) -> None:
+        if self._tracks_table is None:
+            return
+        item = self._tracks_table.item(row, 0)
+        if item is None:
+            return
+        path_value = item.data(QtCore.Qt.UserRole)
+        if not path_value:
+            return
+        path = Path(str(path_value))
+        tags = self._read_tags(path)
+        self._play_track(path, tags)
+
     def _update_tracks_count(self) -> None:
         if self._tracks_table is None or self._tracks_count is None:
             return
         self._tracks_count.setText(f"{self._tracks_table.rowCount()} TRACKS")
+
+    def _toggle_playback(self) -> None:
+        if self._player.playbackState() == QtMultimedia.QMediaPlayer.PlayingState:
+            self._player.pause()
+        else:
+            self._player.play()
+
+    def _seek_to_ratio(self, ratio: float) -> None:
+        if self._duration_ms <= 0:
+            return
+        self._player.setPosition(int(self._duration_ms * ratio))
+
+    def _on_position_changed(self, position_ms: int) -> None:
+        if self._duration_ms > 0 and self._waveform_widget is not None:
+            self._waveform_widget.set_playhead(position_ms / self._duration_ms)
+        self._update_time_label(position_ms, self._duration_ms)
+
+    def _on_duration_changed(self, duration_ms: int) -> None:
+        self._duration_ms = duration_ms
+        self._update_time_label(self._player.position(), duration_ms)
+
+    def _update_time_label(self, position_ms: int, duration_ms: int) -> None:
+        if self._time_label is None:
+            return
+        current = self._format_time(position_ms)
+        total = self._format_time(duration_ms)
+        self._time_label.setText(f"{current} / {total}")
+
+    def _format_time(self, value_ms: int) -> str:
+        total_seconds = max(0, int(value_ms / 1000))
+        minutes, seconds = divmod(total_seconds, 60)
+        return f"{minutes:02d}:{seconds:02d}"
+
+    def _set_waveform_status(self, text: str) -> None:
+        if self._waveform_status is None:
+            return
+        self._waveform_status.setText(text)
+        self._waveform_status.setVisible(True)
+
+    def _clear_waveform_status(self) -> None:
+        if self._waveform_status is None:
+            return
+        self._waveform_status.setVisible(False)
+        self._waveform_status.setText("")
+
+    def _play_track(self, path: Path, tags: dict[str, str | bytes | None]) -> None:
+        self._player.setSource(QtCore.QUrl.fromLocalFile(str(path)))
+        self._player.play()
+        self._update_now_playing(path, tags)
+        self._load_waveform(path)
+
+    def _update_now_playing(
+        self, path: Path, tags: dict[str, str | bytes | None]
+    ) -> None:
+        title = self._coerce_text(tags.get("title")) or ""
+        artist = self._coerce_text(tags.get("artist")) or path.stem
+        if self._track_title is not None:
+            self._track_title.setText(f"{artist} - {title}".strip(" -"))
+        if self._key_chip is not None:
+            self._key_chip.setText(self._coerce_text(tags.get("comments")) or "--")
+        if self._bpm_chip is not None:
+            self._bpm_chip.setText(self._coerce_text(tags.get("bpm")) or "--")
+        if self._energy_chip is not None:
+            self._energy_chip.setText("0")
+
+    def _load_waveform(self, path: Path) -> None:
+        if self._waveform_widget is None:
+            return
+        cached = self._get_cached_waveform(path)
+        if cached is not None:
+            self._waveform_widget.set_waveform(cached)
+            return
+
+        progress = QtWidgets.QProgressDialog(
+            "Analyzing waveform...", "Cancel", 0, 0, self
+        )
+        progress.setWindowTitle("Waveform analysis")
+        progress.setWindowModality(QtCore.Qt.WindowModal)
+        progress.setAutoClose(False)
+        progress.setMinimumDuration(0)
+        progress.show()
+        self._set_waveform_status("Loading waveform...")
+
+        try:
+            samples = self._build_waveform(path, target_bars=320, progress=progress)
+            if progress.wasCanceled():
+                return
+            self._waveform_widget.set_waveform(samples)
+            if samples:
+                self._store_cached_waveform(path, samples)
+                self._save_cache()
+            else:
+                self._set_waveform_status("Waveform unavailable")
+                QtCore.QTimer.singleShot(1500, self._clear_waveform_status)
+        finally:
+            progress.close()
+            self._clear_waveform_status()
+
+    def _build_waveform(
+        self,
+        path: Path,
+        target_bars: int,
+        progress: QtWidgets.QProgressDialog | None = None,
+    ) -> list[float]:
+        try:
+            import numpy as np
+        except ModuleNotFoundError:
+            return []
+
+        data = self._read_audio_samples(path)
+        if data is None:
+            return []
+
+        if data.size == 0:
+            return []
+
+        mono = data.mean(axis=1)
+        total = len(mono)
+        if total == 0:
+            return []
+
+        hop = max(1, total // target_bars)
+        total_bars = max(1, (total + hop - 1) // hop)
+        if progress is not None:
+            progress.setMaximum(total_bars)
+            progress.setValue(0)
+
+        samples: list[float] = []
+        for index, start in enumerate(range(0, total, hop), start=1):
+            if progress is not None:
+                if progress.wasCanceled():
+                    return []
+                progress.setValue(index)
+                if index % 20 == 0:
+                    QtWidgets.QApplication.processEvents()
+            chunk = mono[start : start + hop]
+            if chunk.size == 0:
+                continue
+            rms = float(np.sqrt(np.mean(chunk**2)))
+            samples.append(rms)
+
+        max_value = max(samples) if samples else 1.0
+        if max_value == 0:
+            return samples
+        return [value / max_value for value in samples]
+
+    def _read_audio_samples(self, path: Path) -> np.ndarray | None:
+        try:
+            import numpy as np
+        except ModuleNotFoundError:
+            return None
+
+        try:
+            import soundfile as sf
+        except ModuleNotFoundError:
+            sf = None
+
+        if sf is not None:
+            try:
+                data, _ = sf.read(path, always_2d=True, dtype="float32")
+                return data
+            except Exception:
+                pass
+
+        if path.suffix.lower() == ".wav":
+            try:
+                import wave
+
+                with wave.open(str(path), "rb") as wav:
+                    frames = wav.readframes(wav.getnframes())
+                    channels = wav.getnchannels()
+                    sample_width = wav.getsampwidth()
+                    dtype = {1: np.int8, 2: np.int16, 4: np.int32}.get(sample_width)
+                    if dtype is None:
+                        return None
+                    data = np.frombuffer(frames, dtype=dtype).astype(np.float32)
+                    if channels > 1:
+                        data = data.reshape(-1, channels)
+                    else:
+                        data = data.reshape(-1, 1)
+                    max_val = float(np.iinfo(dtype).max)
+                    return data / max_val
+            except Exception:
+                return None
+
+        try:
+            from pydub import AudioSegment
+        except ModuleNotFoundError:
+            return None
+
+        try:
+            segment = AudioSegment.from_file(path)
+        except Exception:
+            return None
+
+        samples = np.array(segment.get_array_of_samples())
+        channels = segment.channels or 1
+        if channels > 1:
+            samples = samples.reshape(-1, channels)
+        else:
+            samples = samples.reshape(-1, 1)
+        max_val = float(1 << (8 * segment.sample_width - 1))
+        if max_val == 0:
+            return None
+        return samples.astype(np.float32) / max_val
 
     def _load_last_folder(self) -> str | None:
         env_path = Path.cwd() / ".env"
@@ -432,6 +673,7 @@ class MainWindow(QtWidgets.QMainWindow):
             cover_data = None
         cover_icon = self._cover_icon(cover_data, row)
         cover_item.setIcon(cover_icon)
+        cover_item.setData(QtCore.Qt.UserRole, str(path))
         self._tracks_table.setItem(row, 0, cover_item)
 
         artist = tags.get("artist") or path.stem
@@ -535,19 +777,61 @@ class MainWindow(QtWidgets.QMainWindow):
         if isinstance(cover_data, bytes) and len(cover_data) <= 200_000:
             cover_encoded = base64.b64encode(cover_data).decode("ascii")
 
-        self._tags_cache[self._cache_key(path)] = {
-            "mtime_ns": mtime_ns,
-            "artist": info.get("artist"),
-            "title": info.get("title"),
-            "label": info.get("label"),
-            "bpm": info.get("bpm"),
-            "comments": info.get("comments"),
-            "cover_data": cover_encoded,
-        }
+        entry = self._tags_cache.get(self._cache_key(path), {})
+        if not isinstance(entry, dict):
+            entry = {}
+        entry.update(
+            {
+                "mtime_ns": mtime_ns,
+                "artist": info.get("artist"),
+                "title": info.get("title"),
+                "label": info.get("label"),
+                "bpm": info.get("bpm"),
+                "comments": info.get("comments"),
+                "cover_data": cover_encoded,
+            }
+        )
+        self._tags_cache[self._cache_key(path)] = entry
         self._cache_dirty = True
 
     def _cache_key(self, path: Path) -> str:
         return str(path.resolve())
+
+    def _get_cached_waveform(self, path: Path) -> list[float] | None:
+        key = self._cache_key(path)
+        entry = self._tags_cache.get(key)
+        if not isinstance(entry, dict):
+            return None
+        try:
+            mtime_ns = path.stat().st_mtime_ns
+        except OSError:
+            return None
+        if entry.get("mtime_ns") != mtime_ns:
+            return None
+        waveform = entry.get("waveform")
+        if not isinstance(waveform, list):
+            return None
+        output: list[float] = []
+        for value in waveform:
+            try:
+                output.append(float(value))
+            except (TypeError, ValueError):
+                continue
+        return output
+
+    def _store_cached_waveform(self, path: Path, samples: list[float]) -> None:
+        try:
+            mtime_ns = path.stat().st_mtime_ns
+        except OSError:
+            return
+        key = self._cache_key(path)
+        entry = self._tags_cache.get(key)
+        if not isinstance(entry, dict):
+            entry = {}
+        entry["mtime_ns"] = mtime_ns
+        entry["waveform"] = samples
+        self._tags_cache[key] = entry
+        self._cache_dirty = True
 
     def _first_tag(self, audio: object, keys: list[str]) -> str | None:
         for key in keys:
@@ -747,26 +1031,15 @@ class MainWindow(QtWidgets.QMainWindow):
             min-height: 44px;
             font-weight: 700;
         }
-        #cueLabel {
-            background: #e2f1ff;
-            color: #0b6aa8;
-            padding: 2px 6px;
-            border-radius: 6px;
-            font-size: 10px;
-            font-weight: 600;
-        }
-        #ghostButton {
-            background: #e0f2fe;
-            color: #0369a1;
-            border-radius: 6px;
-            padding: 4px 10px;
-            font-weight: 600;
-        }
         #searchInput {
             background: white;
             border: 1px solid #e2e8f0;
             border-radius: 8px;
             padding: 6px 10px;
+        }
+        #waveformStatus {
+            color: #0f7cc4;
+            font-weight: 600;
         }
         #tracksTable {
             background: white;
