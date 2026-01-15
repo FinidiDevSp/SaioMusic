@@ -106,6 +106,7 @@ class WaveformWidget(QtWidgets.QWidget):
                     QtCore.QPointF(x, mid + (height / 2)),
                 )
         else:
+            painter.setPen(QtGui.QPen(QtGui.QColor("#9fc5df"), 2))
             painter.drawLine(
                 QtCore.QPointF(rect.left(), mid),
                 QtCore.QPointF(rect.right(), mid),

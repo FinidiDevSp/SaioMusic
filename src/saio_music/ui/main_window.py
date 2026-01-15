@@ -58,6 +58,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._waveform_widget: WaveformWidget | None = None
         self._track_title: QtWidgets.QLabel | None = None
         self._time_label: QtWidgets.QLabel | None = None
+        self._waveform_status: QtWidgets.QLabel | None = None
         self._key_chip: QtWidgets.QLabel | None = None
         self._bpm_chip: QtWidgets.QLabel | None = None
         self._energy_chip: QtWidgets.QLabel | None = None
@@ -222,10 +223,15 @@ class MainWindow(QtWidgets.QMainWindow):
         layout.addLayout(top_row)
 
         time_row = QtWidgets.QHBoxLayout()
+        waveform_status = QtWidgets.QLabel("")
+        waveform_status.setObjectName("waveformStatus")
+        waveform_status.setVisible(False)
+        time_row.addWidget(waveform_status)
         time_row.addStretch(1)
         time_label = QtWidgets.QLabel("00:00 / 00:00")
         time_row.addWidget(time_label)
         self._time_label = time_label
+        self._waveform_status = waveform_status
         layout.addLayout(time_row)
 
         title = QtWidgets.QLabel("No track selected")
@@ -284,7 +290,7 @@ class MainWindow(QtWidgets.QMainWindow):
         table.verticalHeader().setVisible(False)
         table.setEditTriggers(QtWidgets.QAbstractItemView.NoEditTriggers)
         table.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectRows)
-        table.setSelectionMode(QtWidgets.QAbstractItemView.SingleSelection)
+        table.setSelectionMode(QtWidgets.QAbstractItemView.NoSelection)
         table.setAlternatingRowColors(True)
         table.setShowGrid(False)
         table.setSortingEnabled(True)
@@ -380,7 +386,6 @@ class MainWindow(QtWidgets.QMainWindow):
         if self._tracks_table is None:
             return
         self._tracks_table.clearSelection()
-        self._tracks_table.selectRow(row)
         self._play_track_for_row(row)
 
     def _clear_track_selection(self, row: int, column: int) -> None:
@@ -438,6 +443,18 @@ class MainWindow(QtWidgets.QMainWindow):
         minutes, seconds = divmod(total_seconds, 60)
         return f"{minutes:02d}:{seconds:02d}"
 
+    def _set_waveform_status(self, text: str) -> None:
+        if self._waveform_status is None:
+            return
+        self._waveform_status.setText(text)
+        self._waveform_status.setVisible(True)
+
+    def _clear_waveform_status(self) -> None:
+        if self._waveform_status is None:
+            return
+        self._waveform_status.setVisible(False)
+        self._waveform_status.setText("")
+
     def _play_track(self, path: Path, tags: dict[str, str | bytes | None]) -> None:
         self._player.setSource(QtCore.QUrl.fromLocalFile(str(path)))
         self._player.play()
@@ -461,10 +478,42 @@ class MainWindow(QtWidgets.QMainWindow):
     def _load_waveform(self, path: Path) -> None:
         if self._waveform_widget is None:
             return
-        samples = self._build_waveform(path, target_bars=320)
-        self._waveform_widget.set_waveform(samples)
+        cached = self._get_cached_waveform(path)
+        if cached is not None:
+            self._waveform_widget.set_waveform(cached)
+            return
 
-    def _build_waveform(self, path: Path, target_bars: int) -> list[float]:
+        progress = QtWidgets.QProgressDialog(
+            "Analyzing waveform...", "Cancel", 0, 0, self
+        )
+        progress.setWindowTitle("Waveform analysis")
+        progress.setWindowModality(QtCore.Qt.WindowModal)
+        progress.setAutoClose(False)
+        progress.setMinimumDuration(0)
+        progress.show()
+        self._set_waveform_status("Loading waveform...")
+
+        try:
+            samples = self._build_waveform(path, target_bars=320, progress=progress)
+            if progress.wasCanceled():
+                return
+            self._waveform_widget.set_waveform(samples)
+            if samples:
+                self._store_cached_waveform(path, samples)
+                self._save_cache()
+            else:
+                self._set_waveform_status("Waveform unavailable")
+                QtCore.QTimer.singleShot(1500, self._clear_waveform_status)
+        finally:
+            progress.close()
+            self._clear_waveform_status()
+
+    def _build_waveform(
+        self,
+        path: Path,
+        target_bars: int,
+        progress: QtWidgets.QProgressDialog | None = None,
+    ) -> list[float]:
         try:
             import numpy as np
         except ModuleNotFoundError:
@@ -483,8 +532,19 @@ class MainWindow(QtWidgets.QMainWindow):
             return []
 
         hop = max(1, total // target_bars)
+        total_bars = max(1, (total + hop - 1) // hop)
+        if progress is not None:
+            progress.setMaximum(total_bars)
+            progress.setValue(0)
+
         samples: list[float] = []
-        for start in range(0, total, hop):
+        for index, start in enumerate(range(0, total, hop), start=1):
+            if progress is not None:
+                if progress.wasCanceled():
+                    return []
+                progress.setValue(index)
+                if index % 20 == 0:
+                    QtWidgets.QApplication.processEvents()
             chunk = mono[start : start + hop]
             if chunk.size == 0:
                 continue
@@ -717,19 +777,61 @@ class MainWindow(QtWidgets.QMainWindow):
         if isinstance(cover_data, bytes) and len(cover_data) <= 200_000:
             cover_encoded = base64.b64encode(cover_data).decode("ascii")
 
-        self._tags_cache[self._cache_key(path)] = {
-            "mtime_ns": mtime_ns,
-            "artist": info.get("artist"),
-            "title": info.get("title"),
-            "label": info.get("label"),
-            "bpm": info.get("bpm"),
-            "comments": info.get("comments"),
-            "cover_data": cover_encoded,
-        }
+        entry = self._tags_cache.get(self._cache_key(path), {})
+        if not isinstance(entry, dict):
+            entry = {}
+        entry.update(
+            {
+                "mtime_ns": mtime_ns,
+                "artist": info.get("artist"),
+                "title": info.get("title"),
+                "label": info.get("label"),
+                "bpm": info.get("bpm"),
+                "comments": info.get("comments"),
+                "cover_data": cover_encoded,
+            }
+        )
+        self._tags_cache[self._cache_key(path)] = entry
         self._cache_dirty = True
 
     def _cache_key(self, path: Path) -> str:
         return str(path.resolve())
+
+    def _get_cached_waveform(self, path: Path) -> list[float] | None:
+        key = self._cache_key(path)
+        entry = self._tags_cache.get(key)
+        if not isinstance(entry, dict):
+            return None
+        try:
+            mtime_ns = path.stat().st_mtime_ns
+        except OSError:
+            return None
+        if entry.get("mtime_ns") != mtime_ns:
+            return None
+        waveform = entry.get("waveform")
+        if not isinstance(waveform, list):
+            return None
+        output: list[float] = []
+        for value in waveform:
+            try:
+                output.append(float(value))
+            except (TypeError, ValueError):
+                continue
+        return output
+
+    def _store_cached_waveform(self, path: Path, samples: list[float]) -> None:
+        try:
+            mtime_ns = path.stat().st_mtime_ns
+        except OSError:
+            return
+        key = self._cache_key(path)
+        entry = self._tags_cache.get(key)
+        if not isinstance(entry, dict):
+            entry = {}
+        entry["mtime_ns"] = mtime_ns
+        entry["waveform"] = samples
+        self._tags_cache[key] = entry
+        self._cache_dirty = True
 
     def _first_tag(self, audio: object, keys: list[str]) -> str | None:
         for key in keys:
@@ -934,6 +1036,10 @@ class MainWindow(QtWidgets.QMainWindow):
             border: 1px solid #e2e8f0;
             border-radius: 8px;
             padding: 6px 10px;
+        }
+        #waveformStatus {
+            color: #0f7cc4;
+            font-weight: 600;
         }
         #tracksTable {
             background: white;
