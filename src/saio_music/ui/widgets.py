@@ -9,6 +9,7 @@ from PySide6 import QtCore, QtGui, QtWidgets
 
 class KeyWheelWidget(QtWidgets.QWidget):
     keySelected = QtCore.Signal(str)
+    keyToggled = QtCore.Signal(str, bool)
 
     def __init__(self, parent: QtWidgets.QWidget | None = None) -> None:
         super().__init__(parent)
@@ -30,7 +31,8 @@ class KeyWheelWidget(QtWidgets.QWidget):
         ]
         self._order = [12, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
         self._hover_key: str | None = None
-        self._selected_key: str | None = None
+        self._selected_keys: set[str] = set()
+        self._active_key: str | None = None
 
     def paintEvent(self, event: QtGui.QPaintEvent) -> None:  # noqa: N802
         painter = QtGui.QPainter(self)
@@ -63,10 +65,10 @@ class KeyWheelWidget(QtWidgets.QWidget):
 
         if self._hover_key:
             self._draw_highlight(painter, outer, inner, start, span, self._hover_key)
-        if self._selected_key:
-            self._draw_highlight(
-                painter, outer, inner, start, span, self._selected_key, alpha=0.22
-            )
+        for key in self._selected_keys:
+            self._draw_highlight(painter, outer, inner, start, span, key, alpha=0.22)
+        if self._active_key:
+            self._draw_active_marker(painter, outer, start, span, self._active_key)
         self._draw_labels(painter, outer, inner, start, span)
 
     def mouseMoveEvent(self, event: QtGui.QMouseEvent) -> None:  # noqa: N802
@@ -91,13 +93,27 @@ class KeyWheelWidget(QtWidgets.QWidget):
         if event.button() == QtCore.Qt.LeftButton:
             key = self._key_from_pos(event.position())
             if key:
-                self._selected_key = key
+                if key in self._selected_keys:
+                    self._selected_keys.remove(key)
+                    selected = False
+                else:
+                    self._selected_keys.add(key)
+                    selected = True
+                self.keyToggled.emit(key, selected)
                 self.keySelected.emit(key)
                 self.update()
         super().mousePressEvent(event)
 
     def set_selected_key(self, key: str | None) -> None:
-        self._selected_key = key
+        self._selected_keys = {key} if key else set()
+        self.update()
+
+    def set_selected_keys(self, keys: set[str]) -> None:
+        self._selected_keys = set(keys)
+        self.update()
+
+    def set_active_key(self, key: str | None) -> None:
+        self._active_key = key
         self.update()
 
     @classmethod
@@ -196,6 +212,36 @@ class KeyWheelWidget(QtWidgets.QWidget):
         color.setAlphaF(alpha)
         painter.setBrush(color)
         painter.drawPie(rect, int(angle * 16), int(-span * 16))
+        painter.restore()
+
+    def _draw_active_marker(
+        self,
+        painter: QtGui.QPainter,
+        outer: QtCore.QRectF,
+        start: float,
+        span: float,
+        key: str,
+    ) -> None:
+        parsed = self._parse_key(key)
+        if parsed is None:
+            return
+        key_number, _mode = parsed
+        try:
+            index = self._order.index(key_number)
+        except ValueError:
+            return
+        angle_deg = start - (index * span) - (span / 2)
+        angle = math.radians(angle_deg)
+        center = outer.center()
+        radius = outer.width() * 0.5
+        outer_pos = QtCore.QPointF(
+            center.x() + math.cos(angle) * (radius * 0.95),
+            center.y() - math.sin(angle) * (radius * 0.95),
+        )
+        painter.save()
+        painter.setBrush(QtGui.QColor("#0f7cc4"))
+        painter.setPen(QtCore.Qt.NoPen)
+        painter.drawEllipse(outer_pos, 4, 4)
         painter.restore()
 
     def _draw_labels(
