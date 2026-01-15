@@ -249,12 +249,13 @@ class MainWindow(QtWidgets.QMainWindow):
         search_row.addWidget(tracks_label)
         layout.addLayout(search_row)
 
-        table = QtWidgets.QTableWidget(0, 6)
+        table = QtWidgets.QTableWidget(0, 7)
         table.setHorizontalHeaderLabels(
             [
                 "COVER ART",
                 "ARTIST",
                 "TITLE",
+                "LABEL",
                 "TEMPO",
                 "KEY RESULT",
                 "ENERGY",
@@ -266,7 +267,7 @@ class MainWindow(QtWidgets.QMainWindow):
         table.setSelectionMode(QtWidgets.QAbstractItemView.NoSelection)
         table.setAlternatingRowColors(True)
         table.setShowGrid(False)
-        table.setSortingEnabled(False)
+        table.setSortingEnabled(True)
         table.setObjectName("tracksTable")
         table.cellDoubleClicked.connect(self._select_track_row)
 
@@ -275,14 +276,15 @@ class MainWindow(QtWidgets.QMainWindow):
         )
         table.horizontalHeader().setSectionResizeMode(1, QtWidgets.QHeaderView.Stretch)
         table.horizontalHeader().setSectionResizeMode(2, QtWidgets.QHeaderView.Stretch)
-        table.horizontalHeader().setSectionResizeMode(
-            3, QtWidgets.QHeaderView.ResizeToContents
-        )
+        table.horizontalHeader().setSectionResizeMode(3, QtWidgets.QHeaderView.Stretch)
         table.horizontalHeader().setSectionResizeMode(
             4, QtWidgets.QHeaderView.ResizeToContents
         )
         table.horizontalHeader().setSectionResizeMode(
             5, QtWidgets.QHeaderView.ResizeToContents
+        )
+        table.horizontalHeader().setSectionResizeMode(
+            6, QtWidgets.QHeaderView.ResizeToContents
         )
 
         layout.addWidget(table, 1)
@@ -301,27 +303,54 @@ class MainWindow(QtWidgets.QMainWindow):
             return
 
         supported = {".mp3", ".flac", ".wav", ".m4a", ".ogg", ".aac"}
-        files = sorted(
-            [
-                path
-                for path in folder.rglob("*")
-                if path.is_file() and path.suffix.lower() in supported
-            ],
-            key=lambda item: item.name.lower(),
-        )
+        progress = QtWidgets.QProgressDialog("Scanning folder...", "Cancel", 0, 0, self)
+        progress.setWindowTitle("Loading tracks")
+        progress.setWindowModality(QtCore.Qt.WindowModal)
+        progress.setAutoClose(False)
+        progress.setMinimumDuration(0)
+        progress.show()
 
+        files: list[Path] = []
+        for path in folder.rglob("*"):
+            if progress.wasCanceled():
+                progress.close()
+                return
+            if path.is_file() and path.suffix.lower() in supported:
+                files.append(path)
+            if len(files) % 200 == 0:
+                QtWidgets.QApplication.processEvents()
+
+        files.sort(key=lambda item: item.name.lower())
+
+        progress.setLabelText("Loading tracks...")
+        progress.setMaximum(len(files))
+        progress.setValue(0)
+
+        sorting_enabled = self._tracks_table.isSortingEnabled()
+        self._tracks_table.setSortingEnabled(False)
         self._tracks_table.setRowCount(0)
-        for path in files:
+        for index, path in enumerate(files, start=1):
+            if progress.wasCanceled():
+                break
             self._add_track_row(path)
+            progress.setValue(index)
+            if index % 50 == 0:
+                QtWidgets.QApplication.processEvents()
 
-        if self._tracks_count is not None:
-            self._tracks_count.setText(f"{len(files)} TRACKS")
+        self._tracks_table.setSortingEnabled(sorting_enabled)
+        progress.close()
+        self._update_tracks_count()
 
     def _select_track_row(self, row: int, column: int) -> None:
         if self._tracks_table is None:
             return
         self._tracks_table.clearSelection()
         self._tracks_table.selectRow(row)
+
+    def _update_tracks_count(self) -> None:
+        if self._tracks_table is None or self._tracks_count is None:
+            return
+        self._tracks_count.setText(f"{self._tracks_table.rowCount()} TRACKS")
 
     def _add_track_row(self, path: Path) -> None:
         if self._tracks_table is None:
@@ -340,27 +369,30 @@ class MainWindow(QtWidgets.QMainWindow):
         self._tracks_table.setItem(row, 0, cover_item)
 
         artist = tags.get("artist") or path.stem
-        title = tags.get("title") or path.stem
+        title = tags.get("title") or ""
+        label = tags.get("label") or ""
         tempo = tags.get("bpm") or ""
         key_result = tags.get("comments") or ""
         energy = "0"
 
         self._tracks_table.setItem(row, 1, QtWidgets.QTableWidgetItem(artist))
         self._tracks_table.setItem(row, 2, QtWidgets.QTableWidgetItem(title))
-        self._tracks_table.setItem(row, 3, QtWidgets.QTableWidgetItem(tempo))
+        self._tracks_table.setItem(row, 3, QtWidgets.QTableWidgetItem(label))
+        self._tracks_table.setItem(row, 4, QtWidgets.QTableWidgetItem(tempo))
 
         key_item = QtWidgets.QTableWidgetItem(key_result)
         key_item.setTextAlignment(QtCore.Qt.AlignCenter)
-        self._tracks_table.setItem(row, 4, key_item)
+        self._tracks_table.setItem(row, 5, key_item)
 
         energy_item = QtWidgets.QTableWidgetItem(energy)
         energy_item.setTextAlignment(QtCore.Qt.AlignCenter)
-        self._tracks_table.setItem(row, 5, energy_item)
+        self._tracks_table.setItem(row, 6, energy_item)
 
     def _read_tags(self, path: Path) -> dict[str, str | bytes | None]:
         info: dict[str, str | bytes | None] = {
             "artist": None,
             "title": None,
+            "label": None,
             "bpm": None,
             "comments": None,
             "cover_data": None,
@@ -373,6 +405,9 @@ class MainWindow(QtWidgets.QMainWindow):
         if audio is not None:
             info["artist"] = self._first_tag(audio, ["artist"])
             info["title"] = self._first_tag(audio, ["title"])
+            info["label"] = self._first_tag(
+                audio, ["label", "organization", "publisher"]
+            )
             info["bpm"] = self._first_tag(audio, ["bpm", "tbpm"])
             info["comments"] = self._first_tag(audio, ["comment", "comments"])
 
