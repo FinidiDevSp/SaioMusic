@@ -22,12 +22,12 @@ def _make_chip(text: str, bg: str, fg: str = "#0f172a") -> QtWidgets.QLabel:
 
 
 def _make_cover_pixmap(color: str) -> QtGui.QPixmap:
-    pixmap = QtGui.QPixmap(36, 36)
+    pixmap = QtGui.QPixmap(30, 30)
     pixmap.fill(QtGui.QColor(color))
     painter = QtGui.QPainter(pixmap)
     painter.setRenderHint(QtGui.QPainter.Antialiasing)
     painter.setPen(QtGui.QColor("#ffffff"))
-    painter.drawRect(4, 4, 28, 28)
+    painter.drawRect(3, 3, 24, 24)
     painter.end()
     return pixmap
 
@@ -264,11 +264,14 @@ class MainWindow(QtWidgets.QMainWindow):
         table.verticalHeader().setVisible(False)
         table.setEditTriggers(QtWidgets.QAbstractItemView.NoEditTriggers)
         table.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectRows)
-        table.setSelectionMode(QtWidgets.QAbstractItemView.NoSelection)
+        table.setSelectionMode(QtWidgets.QAbstractItemView.SingleSelection)
         table.setAlternatingRowColors(True)
         table.setShowGrid(False)
         table.setSortingEnabled(True)
         table.setObjectName("tracksTable")
+        table.setIconSize(QtCore.QSize(30, 30))
+        table.setColumnWidth(0, 44)
+        table.cellClicked.connect(self._clear_track_selection)
         table.cellDoubleClicked.connect(self._select_track_row)
 
         table.horizontalHeader().setSectionResizeMode(
@@ -293,9 +296,13 @@ class MainWindow(QtWidgets.QMainWindow):
         return wrapper
 
     def _select_tracks_folder(self) -> None:
-        folder = QtWidgets.QFileDialog.getExistingDirectory(self, "Select music folder")
+        default_dir = self._load_last_folder() or str(Path.cwd())
+        folder = QtWidgets.QFileDialog.getExistingDirectory(
+            self, "Select music folder", default_dir
+        )
         if not folder:
             return
+        self._save_last_folder(Path(folder))
         self._load_tracks(Path(folder))
 
     def _load_tracks(self, folder: Path) -> None:
@@ -347,10 +354,57 @@ class MainWindow(QtWidgets.QMainWindow):
         self._tracks_table.clearSelection()
         self._tracks_table.selectRow(row)
 
+    def _clear_track_selection(self, row: int, column: int) -> None:
+        if self._tracks_table is None:
+            return
+        self._tracks_table.clearSelection()
+
     def _update_tracks_count(self) -> None:
         if self._tracks_table is None or self._tracks_count is None:
             return
         self._tracks_count.setText(f"{self._tracks_table.rowCount()} TRACKS")
+
+    def _load_last_folder(self) -> str | None:
+        env_path = Path.cwd() / ".env"
+        if not env_path.exists():
+            return None
+        try:
+            content = env_path.read_text(encoding="utf-8")
+        except OSError:
+            return None
+        for line in content.splitlines():
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, value = line.split("=", 1)
+            if key.strip() == "LAST_MUSIC_FOLDER":
+                return value.strip().strip('"').strip("'")
+        return None
+
+    def _save_last_folder(self, folder: Path) -> None:
+        env_path = Path.cwd() / ".env"
+        existing: list[str] = []
+        if env_path.exists():
+            try:
+                existing = env_path.read_text(encoding="utf-8").splitlines()
+            except OSError:
+                existing = []
+
+        updated = False
+        output: list[str] = []
+        for line in existing:
+            if line.strip().startswith("LAST_MUSIC_FOLDER="):
+                output.append(f"LAST_MUSIC_FOLDER={folder}")
+                updated = True
+            else:
+                output.append(line)
+
+        if not updated:
+            output.append(f"LAST_MUSIC_FOLDER={folder}")
+
+        try:
+            env_path.write_text("\n".join(output) + "\n", encoding="utf-8")
+        except OSError:
+            return
 
     def _add_track_row(self, path: Path) -> None:
         if self._tracks_table is None:
@@ -359,6 +413,7 @@ class MainWindow(QtWidgets.QMainWindow):
         tags = self._read_tags(path)
         row = self._tracks_table.rowCount()
         self._tracks_table.insertRow(row)
+        self._tracks_table.setRowHeight(row, 36)
 
         cover_item = QtWidgets.QTableWidgetItem()
         cover_data = tags.get("cover_data")
@@ -525,7 +580,7 @@ class MainWindow(QtWidgets.QMainWindow):
             image = QtGui.QImage.fromData(cover_data)
             if not image.isNull():
                 pixmap = QtGui.QPixmap.fromImage(image).scaled(
-                    36, 36, QtCore.Qt.KeepAspectRatio, QtCore.Qt.SmoothTransformation
+                    30, 30, QtCore.Qt.KeepAspectRatio, QtCore.Qt.SmoothTransformation
                 )
                 return QtGui.QIcon(pixmap)
 
@@ -556,6 +611,9 @@ class MainWindow(QtWidgets.QMainWindow):
         #topBar {
             background: #f7fbff;
             border-radius: 10px;
+        }
+        QAbstractButton {
+            cursor: pointinghand;
         }
         QPushButton[tab="true"] {
             background: transparent;
