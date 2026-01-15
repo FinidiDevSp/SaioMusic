@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import json
+import re
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -63,6 +64,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self._bpm_chip: QtWidgets.QLabel | None = None
         self._energy_chip: QtWidgets.QLabel | None = None
         self._duration_ms = 0
+        self._active_key_filter: str | None = None
+        self._key_wheel: KeyWheelWidget | None = None
 
         central = QtWidgets.QWidget()
         root = QtWidgets.QVBoxLayout(central)
@@ -139,7 +142,9 @@ class MainWindow(QtWidgets.QMainWindow):
         layout.setSpacing(16)
 
         key_wheel = KeyWheelWidget()
+        key_wheel.keySelected.connect(self._filter_by_key)
         layout.addWidget(key_wheel, alignment=QtCore.Qt.AlignHCenter)
+        self._key_wheel = key_wheel
 
         add_tracks = QtWidgets.QPushButton("ADD TRACKS")
         add_tracks.setObjectName("primaryButton")
@@ -393,6 +398,48 @@ class MainWindow(QtWidgets.QMainWindow):
             return
         self._tracks_table.clearSelection()
 
+    def _filter_by_key(self, key: str) -> None:
+        if self._tracks_table is None:
+            return
+        if self._active_key_filter == key:
+            self._active_key_filter = None
+            if self._key_wheel is not None:
+                self._key_wheel.set_selected_key(None)
+        else:
+            self._active_key_filter = key
+            if self._key_wheel is not None:
+                self._key_wheel.set_selected_key(key)
+
+        if self._active_key_filter is None:
+            for row in range(self._tracks_table.rowCount()):
+                self._tracks_table.setRowHidden(row, False)
+            self._update_tracks_count()
+            return
+
+        for row in range(self._tracks_table.rowCount()):
+            item = self._tracks_table.item(row, 5)
+            if item is None:
+                self._tracks_table.setRowHidden(row, True)
+                continue
+            value = item.data(QtCore.Qt.UserRole)
+            value = str(value).strip().upper()
+            match = value == (self._active_key_filter or "").upper()
+            self._tracks_table.setRowHidden(row, not match)
+
+        self._update_tracks_count()
+
+    def _camelot_color(self, key: str | None) -> QtGui.QColor | None:
+        if not key:
+            return None
+        return KeyWheelWidget.color_for_key(key)
+
+    def _normalize_camelot_key(self, value: object) -> str | None:
+        text = self._coerce_text(value) or ""
+        match = re.search(r"\b(1[0-2]|[1-9])\s*([ABab])\b", text)
+        if not match:
+            return None
+        return f"{int(match.group(1))}{match.group(2).upper()}"
+
     def _play_track_for_row(self, row: int) -> None:
         if self._tracks_table is None:
             return
@@ -409,7 +456,11 @@ class MainWindow(QtWidgets.QMainWindow):
     def _update_tracks_count(self) -> None:
         if self._tracks_table is None or self._tracks_count is None:
             return
-        self._tracks_count.setText(f"{self._tracks_table.rowCount()} TRACKS")
+        visible = 0
+        for row in range(self._tracks_table.rowCount()):
+            if not self._tracks_table.isRowHidden(row):
+                visible += 1
+        self._tracks_count.setText(f"{visible} TRACKS")
 
     def _toggle_playback(self) -> None:
         if self._player.playbackState() == QtMultimedia.QMediaPlayer.PlayingState:
@@ -690,6 +741,11 @@ class MainWindow(QtWidgets.QMainWindow):
 
         key_item = QtWidgets.QTableWidgetItem(key_result)
         key_item.setTextAlignment(QtCore.Qt.AlignCenter)
+        normalized_key = self._normalize_camelot_key(key_result)
+        key_item.setData(QtCore.Qt.UserRole, normalized_key or "")
+        key_color = self._camelot_color(normalized_key)
+        if key_color is not None:
+            key_item.setBackground(key_color)
         self._tracks_table.setItem(row, 5, key_item)
 
         energy_item = QtWidgets.QTableWidgetItem(energy)
