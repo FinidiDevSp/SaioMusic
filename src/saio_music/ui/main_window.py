@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 from pathlib import Path
 
 from mutagen import File as MutagenFile
@@ -300,11 +301,14 @@ class MainWindow(QtWidgets.QMainWindow):
             return
 
         supported = {".mp3", ".flac", ".wav", ".m4a", ".ogg", ".aac"}
-        files = [
-            path
-            for path in folder.rglob("*")
-            if path.is_file() and path.suffix.lower() in supported
-        ]
+        files = sorted(
+            [
+                path
+                for path in folder.rglob("*")
+                if path.is_file() and path.suffix.lower() in supported
+            ],
+            key=lambda item: item.name.lower(),
+        )
 
         self._tracks_table.setRowCount(0)
         for path in files:
@@ -376,7 +380,10 @@ class MainWindow(QtWidgets.QMainWindow):
             audio_full = MutagenFile(path)
         except Exception:
             audio_full = None
-        info["cover_data"] = self._extract_cover(audio_full)
+        if audio_full is not None:
+            if not info["comments"]:
+                info["comments"] = self._extract_comment(audio_full)
+            info["cover_data"] = self._extract_cover(audio_full)
         return info
 
     def _first_tag(self, audio: object, keys: list[str]) -> str | None:
@@ -396,12 +403,17 @@ class MainWindow(QtWidgets.QMainWindow):
         if tags is None:
             return None
 
-        if "APIC:" in tags:
-            return tags["APIC:"].data
-        if "APIC" in tags:
+        if hasattr(tags, "getall"):
             apic = tags.getall("APIC")
             if apic:
                 return apic[0].data
+
+        for key in list(tags.keys()):
+            if str(key).startswith("APIC"):
+                frame = tags[key]
+                data = getattr(frame, "data", None)
+                if isinstance(data, bytes | bytearray):
+                    return bytes(data)
 
         pictures = getattr(audio, "pictures", None)
         if pictures:
@@ -410,7 +422,7 @@ class MainWindow(QtWidgets.QMainWindow):
         covr = tags.get("covr")
         if covr:
             try:
-                return covr[0]
+                return bytes(covr[0])
             except (IndexError, TypeError):
                 return None
 
@@ -418,10 +430,59 @@ class MainWindow(QtWidgets.QMainWindow):
             if key in tags:
                 value = tags[key]
                 if isinstance(value, list | tuple) and value:
-                    return value[0]
+                    return self._coerce_bytes(value[0])
                 if isinstance(value, bytes):
                     return value
 
+        return None
+
+    def _extract_comment(self, audio: object) -> str | None:
+        tags = getattr(audio, "tags", None)
+        if tags is None:
+            return None
+
+        for key in ("comment", "comments", "COMMENT"):
+            comment = self._coerce_text(tags.get(key))
+            if comment:
+                return comment
+
+        comment = self._coerce_text(tags.get("\xa9cmt"))
+        if comment:
+            return comment
+
+        for key in list(tags.keys()):
+            if str(key).startswith("COMM"):
+                frame = tags[key]
+                text = getattr(frame, "text", None)
+                if text:
+                    return str(text[0])
+
+        return None
+
+    def _coerce_text(self, value: object) -> str | None:
+        if value is None:
+            return None
+        if isinstance(value, list | tuple):
+            if not value:
+                return None
+            value = value[0]
+        if isinstance(value, bytes):
+            try:
+                return value.decode("utf-8", errors="ignore").strip() or None
+            except Exception:
+                return None
+        return str(value).strip() or None
+
+    def _coerce_bytes(self, value: object) -> bytes | None:
+        if isinstance(value, bytes):
+            return value
+        if isinstance(value, bytearray):
+            return bytes(value)
+        if isinstance(value, str):
+            try:
+                return base64.b64decode(value)
+            except Exception:
+                return None
         return None
 
     def _cover_icon(self, cover_data: bytes | None, row: int) -> QtGui.QIcon:
