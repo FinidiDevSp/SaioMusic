@@ -586,6 +586,9 @@ class MainWindow(QtWidgets.QMainWindow):
             selection-background-color: #e0f2fe;
             selection-color: #0f172a;
         }
+        #tracksTable::item:hover {
+            background: transparent;
+        }
         #tracksTable QHeaderView::section {
             background: #f1f5f9;
             color: #475569;
