@@ -47,13 +47,15 @@ class KeyWheelWidget(QtWidgets.QWidget):
 
 
 class WaveformWidget(QtWidgets.QWidget):
+    seekRequested = QtCore.Signal(float)
+
     def __init__(self, parent: QtWidgets.QWidget | None = None) -> None:
         super().__init__(parent)
         self.setMinimumHeight(84)
-        self._amplitudes = self._build_amplitudes()
-        self._cue_positions = [0.04, 0.33, 0.41, 0.48, 0.56, 0.82]
+        self._samples = self._build_placeholder()
+        self._playhead = 0.0
 
-    def _build_amplitudes(self) -> list[float]:
+    def _build_placeholder(self) -> list[float]:
         values: list[float] = []
         for index in range(220):
             wave = math.sin(index / 8) + 0.55 * math.sin(index / 3.1)
@@ -61,6 +63,23 @@ class WaveformWidget(QtWidgets.QWidget):
             values.append(abs(wave + pulse))
         max_value = max(values) if values else 1.0
         return [value / max_value for value in values]
+
+    def set_waveform(self, samples: list[float]) -> None:
+        self._samples = samples if samples else self._build_placeholder()
+        self.update()
+
+    def set_playhead(self, ratio: float) -> None:
+        self._playhead = max(0.0, min(1.0, ratio))
+        self.update()
+
+    def mousePressEvent(self, event: QtGui.QMouseEvent) -> None:  # noqa: N802
+        if event.button() == QtCore.Qt.LeftButton:
+            rect = self.rect().adjusted(6, 8, -6, -8)
+            if rect.width() > 0:
+                ratio = (event.position().x() - rect.left()) / rect.width()
+                ratio = max(0.0, min(1.0, ratio))
+                self.seekRequested.emit(ratio)
+        super().mousePressEvent(event)
 
     def paintEvent(self, event: QtGui.QPaintEvent) -> None:  # noqa: N802
         painter = QtGui.QPainter(self)
@@ -77,21 +96,19 @@ class WaveformWidget(QtWidgets.QWidget):
         pen = QtGui.QPen(bar_color, 2)
         painter.setPen(pen)
 
-        if self._amplitudes:
-            step = rect.width() / len(self._amplitudes)
-            for index, amp in enumerate(self._amplitudes):
+        if self._samples:
+            step = rect.width() / len(self._samples)
+            for index, amp in enumerate(self._samples):
                 x = rect.left() + (index * step)
-                height = amp * (rect.height() * 0.8)
+                height = amp * (rect.height() * 0.85)
                 painter.drawLine(
                     QtCore.QPointF(x, mid - (height / 2)),
                     QtCore.QPointF(x, mid + (height / 2)),
                 )
 
-        cue_pen = QtGui.QPen(QtGui.QColor("#0d78c9"), 2)
-        painter.setPen(cue_pen)
-        for cue in self._cue_positions:
-            x = rect.left() + (rect.width() * cue)
-            painter.drawLine(
-                QtCore.QPointF(x, rect.top()),
-                QtCore.QPointF(x, rect.bottom()),
-            )
+        playhead_x = rect.left() + (rect.width() * self._playhead)
+        painter.setPen(QtGui.QPen(QtGui.QColor("#0f7cc4"), 2))
+        painter.drawLine(
+            QtCore.QPointF(playhead_x, rect.top()),
+            QtCore.QPointF(playhead_x, rect.bottom()),
+        )
