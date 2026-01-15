@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import json
 from pathlib import Path
 
 from mutagen import File as MutagenFile
@@ -44,6 +45,8 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self._tracks_table: QtWidgets.QTableWidget | None = None
         self._tracks_count: QtWidgets.QLabel | None = None
+        self._tags_cache = self._load_cache()
+        self._cache_dirty = False
 
         central = QtWidgets.QWidget()
         root = QtWidgets.QVBoxLayout(central)
@@ -318,35 +321,43 @@ class MainWindow(QtWidgets.QMainWindow):
         progress.show()
 
         files: list[Path] = []
-        for path in folder.rglob("*"):
-            if progress.wasCanceled():
-                progress.close()
+        canceled = False
+        try:
+            for path in folder.rglob("*"):
+                if progress.wasCanceled():
+                    canceled = True
+                    break
+                if path.is_file() and path.suffix.lower() in supported:
+                    files.append(path)
+                if len(files) % 200 == 0:
+                    QtWidgets.QApplication.processEvents()
+
+            if canceled:
                 return
-            if path.is_file() and path.suffix.lower() in supported:
-                files.append(path)
-            if len(files) % 200 == 0:
-                QtWidgets.QApplication.processEvents()
 
-        files.sort(key=lambda item: item.name.lower())
+            files.sort(key=lambda item: item.name.lower())
 
-        progress.setLabelText("Loading tracks...")
-        progress.setMaximum(len(files))
-        progress.setValue(0)
+            progress.setLabelText("Loading tracks...")
+            progress.setMaximum(len(files))
+            progress.setValue(0)
 
-        sorting_enabled = self._tracks_table.isSortingEnabled()
-        self._tracks_table.setSortingEnabled(False)
-        self._tracks_table.setRowCount(0)
-        for index, path in enumerate(files, start=1):
-            if progress.wasCanceled():
-                break
-            self._add_track_row(path)
-            progress.setValue(index)
-            if index % 50 == 0:
-                QtWidgets.QApplication.processEvents()
+            sorting_enabled = self._tracks_table.isSortingEnabled()
+            self._tracks_table.setSortingEnabled(False)
+            self._tracks_table.setRowCount(0)
+            for index, path in enumerate(files, start=1):
+                if progress.wasCanceled():
+                    canceled = True
+                    break
+                self._add_track_row(path)
+                progress.setValue(index)
+                if index % 50 == 0:
+                    QtWidgets.QApplication.processEvents()
 
-        self._tracks_table.setSortingEnabled(sorting_enabled)
-        progress.close()
-        self._update_tracks_count()
+            self._tracks_table.setSortingEnabled(sorting_enabled)
+        finally:
+            progress.close()
+            self._save_cache()
+            self._update_tracks_count()
 
     def _select_track_row(self, row: int, column: int) -> None:
         if self._tracks_table is None:
@@ -444,6 +455,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self._tracks_table.setItem(row, 6, energy_item)
 
     def _read_tags(self, path: Path) -> dict[str, str | bytes | None]:
+        cached = self._get_cached_tags(path)
+        if cached is not None:
+            return cached
+
         info: dict[str, str | bytes | None] = {
             "artist": None,
             "title": None,
@@ -474,7 +489,65 @@ class MainWindow(QtWidgets.QMainWindow):
             if not info["comments"]:
                 info["comments"] = self._extract_comment(audio_full)
             info["cover_data"] = self._extract_cover(audio_full)
+
+        self._store_cached_tags(path, info)
         return info
+
+    def _get_cached_tags(self, path: Path) -> dict[str, str | bytes | None] | None:
+        key = self._cache_key(path)
+        entry = self._tags_cache.get(key)
+        if not isinstance(entry, dict):
+            return None
+        try:
+            mtime_ns = path.stat().st_mtime_ns
+        except OSError:
+            return None
+        if entry.get("mtime_ns") != mtime_ns:
+            return None
+
+        cover_data = entry.get("cover_data")
+        cover_bytes = None
+        if isinstance(cover_data, str):
+            try:
+                cover_bytes = base64.b64decode(cover_data)
+            except Exception:
+                cover_bytes = None
+
+        return {
+            "artist": self._coerce_text(entry.get("artist")),
+            "title": self._coerce_text(entry.get("title")),
+            "label": self._coerce_text(entry.get("label")),
+            "bpm": self._coerce_text(entry.get("bpm")),
+            "comments": self._coerce_text(entry.get("comments")),
+            "cover_data": cover_bytes,
+        }
+
+    def _store_cached_tags(
+        self, path: Path, info: dict[str, str | bytes | None]
+    ) -> None:
+        try:
+            mtime_ns = path.stat().st_mtime_ns
+        except OSError:
+            return
+
+        cover_data = info.get("cover_data")
+        cover_encoded = None
+        if isinstance(cover_data, bytes) and len(cover_data) <= 200_000:
+            cover_encoded = base64.b64encode(cover_data).decode("ascii")
+
+        self._tags_cache[self._cache_key(path)] = {
+            "mtime_ns": mtime_ns,
+            "artist": info.get("artist"),
+            "title": info.get("title"),
+            "label": info.get("label"),
+            "bpm": info.get("bpm"),
+            "comments": info.get("comments"),
+            "cover_data": cover_encoded,
+        }
+        self._cache_dirty = True
+
+    def _cache_key(self, path: Path) -> str:
+        return str(path.resolve())
 
     def _first_tag(self, audio: object, keys: list[str]) -> str | None:
         for key in keys:
@@ -574,6 +647,30 @@ class MainWindow(QtWidgets.QMainWindow):
             except Exception:
                 return None
         return None
+
+    def _load_cache(self) -> dict[str, dict[str, object]]:
+        cache_path = Path.cwd() / ".saiomusic_cache.json"
+        if not cache_path.exists():
+            return {}
+        try:
+            data = json.loads(cache_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return {}
+        if isinstance(data, dict):
+            return data
+        return {}
+
+    def _save_cache(self) -> None:
+        if not self._cache_dirty:
+            return
+        cache_path = Path.cwd() / ".saiomusic_cache.json"
+        try:
+            cache_path.write_text(
+                json.dumps(self._tags_cache, ensure_ascii=True), encoding="utf-8"
+            )
+            self._cache_dirty = False
+        except OSError:
+            return
 
     def _cover_icon(self, cover_data: bytes | None, row: int) -> QtGui.QIcon:
         if cover_data:
