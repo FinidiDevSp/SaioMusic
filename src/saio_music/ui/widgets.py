@@ -52,7 +52,7 @@ class WaveformWidget(QtWidgets.QWidget):
     def __init__(self, parent: QtWidgets.QWidget | None = None) -> None:
         super().__init__(parent)
         self.setMinimumHeight(84)
-        self._samples = self._build_placeholder()
+        self._samples: list[float] = []
         self._playhead = 0.0
 
     def _build_placeholder(self) -> list[float]:
@@ -65,7 +65,7 @@ class WaveformWidget(QtWidgets.QWidget):
         return [value / max_value for value in values]
 
     def set_waveform(self, samples: list[float]) -> None:
-        self._samples = samples if samples else self._build_placeholder()
+        self._samples = samples
         self.update()
 
     def set_playhead(self, ratio: float) -> None:
@@ -105,6 +105,11 @@ class WaveformWidget(QtWidgets.QWidget):
                     QtCore.QPointF(x, mid - (height / 2)),
                     QtCore.QPointF(x, mid + (height / 2)),
                 )
+        else:
+            painter.drawLine(
+                QtCore.QPointF(rect.left(), mid),
+                QtCore.QPointF(rect.right(), mid),
+            )
 
         playhead_x = rect.left() + (rect.width() * self._playhead)
         painter.setPen(QtGui.QPen(QtGui.QColor("#0f7cc4"), 2))

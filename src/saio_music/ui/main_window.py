@@ -5,9 +5,13 @@ from __future__ import annotations
 import base64
 import json
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from mutagen import File as MutagenFile
 from PySide6 import QtCore, QtGui, QtMultimedia, QtWidgets
+
+if TYPE_CHECKING:
+    import numpy as np
 
 from saio_music.ui.widgets import KeyWheelWidget, WaveformWidget
 
@@ -463,13 +467,11 @@ class MainWindow(QtWidgets.QMainWindow):
     def _build_waveform(self, path: Path, target_bars: int) -> list[float]:
         try:
             import numpy as np
-            import soundfile as sf
         except ModuleNotFoundError:
             return []
 
-        try:
-            data, _ = sf.read(path, always_2d=True, dtype="float32")
-        except Exception:
+        data = self._read_audio_samples(path)
+        if data is None:
             return []
 
         if data.size == 0:
@@ -493,6 +495,66 @@ class MainWindow(QtWidgets.QMainWindow):
         if max_value == 0:
             return samples
         return [value / max_value for value in samples]
+
+    def _read_audio_samples(self, path: Path) -> np.ndarray | None:
+        try:
+            import numpy as np
+        except ModuleNotFoundError:
+            return None
+
+        try:
+            import soundfile as sf
+        except ModuleNotFoundError:
+            sf = None
+
+        if sf is not None:
+            try:
+                data, _ = sf.read(path, always_2d=True, dtype="float32")
+                return data
+            except Exception:
+                pass
+
+        if path.suffix.lower() == ".wav":
+            try:
+                import wave
+
+                with wave.open(str(path), "rb") as wav:
+                    frames = wav.readframes(wav.getnframes())
+                    channels = wav.getnchannels()
+                    sample_width = wav.getsampwidth()
+                    dtype = {1: np.int8, 2: np.int16, 4: np.int32}.get(sample_width)
+                    if dtype is None:
+                        return None
+                    data = np.frombuffer(frames, dtype=dtype).astype(np.float32)
+                    if channels > 1:
+                        data = data.reshape(-1, channels)
+                    else:
+                        data = data.reshape(-1, 1)
+                    max_val = float(np.iinfo(dtype).max)
+                    return data / max_val
+            except Exception:
+                return None
+
+        try:
+            from pydub import AudioSegment
+        except ModuleNotFoundError:
+            return None
+
+        try:
+            segment = AudioSegment.from_file(path)
+        except Exception:
+            return None
+
+        samples = np.array(segment.get_array_of_samples())
+        channels = segment.channels or 1
+        if channels > 1:
+            samples = samples.reshape(-1, channels)
+        else:
+            samples = samples.reshape(-1, 1)
+        max_val = float(1 << (8 * segment.sample_width - 1))
+        if max_val == 0:
+            return None
+        return samples.astype(np.float32) / max_val
 
     def _load_last_folder(self) -> str | None:
         env_path = Path.cwd() / ".env"
