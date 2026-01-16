@@ -70,6 +70,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self._play_button: QtWidgets.QToolButton | None = None
         self._now_playing_cover: QtWidgets.QLabel | None = None
         self._current_row: int | None = None
+        self._prev_button: QtWidgets.QToolButton | None = None
+        self._next_button: QtWidgets.QToolButton | None = None
+        self._track_index_label: QtWidgets.QLabel | None = None
 
         central = QtWidgets.QWidget()
         root = QtWidgets.QVBoxLayout(central)
@@ -290,6 +293,10 @@ class MainWindow(QtWidgets.QMainWindow):
         volume_widget = QtWidgets.QWidget()
         volume_widget.setLayout(volume_layout)
 
+        track_index = QtWidgets.QLabel("0 / 0")
+        track_index.setObjectName("trackIndex")
+        self._track_index_label = track_index
+
         now_row.addWidget(prev_btn)
         now_row.addWidget(play)
         now_row.addWidget(next_btn)
@@ -297,8 +304,11 @@ class MainWindow(QtWidgets.QMainWindow):
         now_row.addWidget(now_playing_widget, 1)
         now_row.addWidget(info_wrap)
         now_row.addWidget(volume_widget)
+        now_row.addWidget(track_index)
         layout.addLayout(now_row)
         self._play_button = play
+        self._prev_button = prev_btn
+        self._next_button = next_btn
 
         return panel
 
@@ -522,6 +532,7 @@ class MainWindow(QtWidgets.QMainWindow):
         tags = self._read_tags(path)
         self._current_row = row
         self._play_track(path, tags)
+        self._update_track_position()
 
     def _play_adjacent(self, step: int) -> None:
         if self._tracks_table is None:
@@ -540,6 +551,23 @@ class MainWindow(QtWidgets.QMainWindow):
             target = rows[(index + step) % len(rows)]
         self._play_track_for_row(target)
 
+    def _update_track_position(self) -> None:
+        if self._tracks_table is None or self._track_index_label is None:
+            return
+        rows = [
+            row
+            for row in range(self._tracks_table.rowCount())
+            if not self._tracks_table.isRowHidden(row)
+        ]
+        if not rows:
+            self._track_index_label.setText("0 / 0")
+            return
+        if self._current_row not in rows:
+            self._track_index_label.setText(f"0 / {len(rows)}")
+            return
+        index = rows.index(self._current_row) + 1
+        self._track_index_label.setText(f"{index} / {len(rows)}")
+
     def _update_tracks_count(self) -> None:
         if self._tracks_table is None or self._tracks_count is None:
             return
@@ -548,6 +576,8 @@ class MainWindow(QtWidgets.QMainWindow):
             if not self._tracks_table.isRowHidden(row):
                 visible += 1
         self._tracks_count.setText(f"{visible} TRACKS")
+        self._update_navigation_state(visible)
+        self._update_track_position()
 
     def _toggle_playback(self) -> None:
         if self._player.playbackState() == QtMultimedia.QMediaPlayer.PlayingState:
@@ -581,6 +611,13 @@ class MainWindow(QtWidgets.QMainWindow):
         minutes, seconds = divmod(total_seconds, 60)
         return f"{minutes:02d}:{seconds:02d}"
 
+    def _update_navigation_state(self, visible: int) -> None:
+        if self._prev_button is None or self._next_button is None:
+            return
+        enabled = visible > 1
+        self._prev_button.setEnabled(enabled)
+        self._next_button.setEnabled(enabled)
+
     def _on_playback_state_changed(
         self, state: QtMultimedia.QMediaPlayer.PlaybackState
     ) -> None:
@@ -603,6 +640,18 @@ class MainWindow(QtWidgets.QMainWindow):
         self._waveform_status.setVisible(False)
         self._waveform_status.setText("")
 
+    def _animate_now_playing(self, widget: QtWidgets.QWidget) -> None:
+        effect = widget.graphicsEffect()
+        if effect is None or not isinstance(effect, QtWidgets.QGraphicsOpacityEffect):
+            effect = QtWidgets.QGraphicsOpacityEffect(widget)
+            widget.setGraphicsEffect(effect)
+        animation = QtCore.QPropertyAnimation(effect, b"opacity", widget)
+        animation.setDuration(220)
+        animation.setStartValue(0.3)
+        animation.setEndValue(1.0)
+        animation.setEasingCurve(QtCore.QEasingCurve.OutCubic)
+        animation.start(QtCore.QAbstractAnimation.DeleteWhenStopped)
+
     def _play_track(self, path: Path, tags: dict[str, str | bytes | None]) -> None:
         self._player.setSource(QtCore.QUrl.fromLocalFile(str(path)))
         self._player.play()
@@ -619,6 +668,7 @@ class MainWindow(QtWidgets.QMainWindow):
         artist = self._coerce_text(tags.get("artist")) or path.stem
         if self._track_title is not None:
             self._track_title.setText(f"{artist} - {title}".strip(" -"))
+            self._animate_now_playing(self._track_title)
         if self._now_playing_cover is not None:
             cover_data = tags.get("cover_data")
             if isinstance(cover_data, bytes):
@@ -631,6 +681,7 @@ class MainWindow(QtWidgets.QMainWindow):
                         QtCore.Qt.SmoothTransformation,
                     )
                     self._now_playing_cover.setPixmap(pixmap)
+                    self._animate_now_playing(self._now_playing_cover)
         if self._key_chip is not None:
             self._key_chip.setText(self._coerce_text(tags.get("comments")) or "--")
         if self._bpm_chip is not None:
@@ -1242,6 +1293,11 @@ class MainWindow(QtWidgets.QMainWindow):
             width: 14px;
             margin: -4px 0;
             border-radius: 7px;
+        }
+        #trackIndex {
+            color: #64748b;
+            font-weight: 600;
+            padding-left: 6px;
         }
         #searchInput {
             background: white;
