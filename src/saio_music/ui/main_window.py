@@ -395,6 +395,7 @@ class MainWindow(QtWidgets.QMainWindow):
         table.setAlternatingRowColors(True)
         table.setShowGrid(False)
         table.setSortingEnabled(True)
+        table.setFocusPolicy(QtCore.Qt.NoFocus)
         table.setObjectName("tracksTable")
         table.setIconSize(QtCore.QSize(30, 30))
         table.setColumnWidth(0, 44)
@@ -1464,6 +1465,10 @@ class MainWindow(QtWidgets.QMainWindow):
         }
         #tracksTable::item:hover {
             background: transparent;
+        }
+        #tracksTable::item:selected {
+            background: transparent;
+            color: #0f172a;
         }
         #tracksTable QHeaderView::section {
             background: #f1f5f9;
