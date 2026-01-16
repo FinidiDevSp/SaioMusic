@@ -563,6 +563,34 @@ class MainWindow(QtWidgets.QMainWindow):
             return None
         return KeyWheelWidget.color_for_key(key)
 
+    def _genre_color(self, genre: object) -> QtGui.QColor | None:
+        genre = (self._coerce_text(genre) or "").strip().lower()
+        if not genre:
+            return None
+        palette = {
+            "house": "#dbeafe",
+            "deep house": "#bfdbfe",
+            "tech house": "#c7d2fe",
+            "techno": "#e0e7ff",
+            "trance": "#fde68a",
+            "progressive": "#fee2e2",
+            "pop": "#fecdd3",
+            "rock": "#fef3c7",
+            "hip hop": "#bbf7d0",
+            "rap": "#bbf7d0",
+            "r&b": "#fed7aa",
+            "drum & bass": "#bae6fd",
+            "dnb": "#bae6fd",
+            "edm": "#fbcfe8",
+            "dance": "#fbcfe8",
+            "electronic": "#e9d5ff",
+            "ambient": "#e0f2fe",
+        }
+        for key, color in palette.items():
+            if key in genre:
+                return QtGui.QColor(color)
+        return QtGui.QColor("#f1f5f9")
+
     def _normalize_camelot_key(self, value: object) -> str | None:
         text = self._coerce_text(value) or ""
         match = re.search(r"\b(1[0-2]|[1-9])\s*([ABab])\b", text)
@@ -1028,7 +1056,12 @@ class MainWindow(QtWidgets.QMainWindow):
         self._tracks_table.setItem(row, 1, QtWidgets.QTableWidgetItem(artist))
         self._tracks_table.setItem(row, 2, QtWidgets.QTableWidgetItem(title))
         self._tracks_table.setItem(row, 3, QtWidgets.QTableWidgetItem(label))
-        self._tracks_table.setItem(row, 4, QtWidgets.QTableWidgetItem(genre))
+        genre_item = QtWidgets.QTableWidgetItem(genre)
+        genre_item.setData(QtCore.Qt.UserRole, genre.lower())
+        genre_color = self._genre_color(genre)
+        if genre_color is not None:
+            genre_item.setBackground(genre_color)
+        self._tracks_table.setItem(row, 4, genre_item)
         self._tracks_table.setItem(row, 5, QtWidgets.QTableWidgetItem(tempo))
 
         key_item = QtWidgets.QTableWidgetItem(key_result)
@@ -1057,6 +1090,14 @@ class MainWindow(QtWidgets.QMainWindow):
                     if cover_data:
                         cached["cover_data"] = cover_data
                         self._store_cached_tags(path, cached)
+            if not cached.get("genre"):
+                try:
+                    audio = MutagenFile(path, easy=True)
+                except Exception:
+                    audio = None
+                if audio is not None:
+                    cached["genre"] = self._first_tag(audio, ["genre", "tcon"])
+                    self._store_cached_tags(path, cached)
             return cached
 
         info: dict[str, str | bytes | None] = {
