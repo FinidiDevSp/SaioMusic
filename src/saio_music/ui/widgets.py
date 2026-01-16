@@ -10,6 +10,7 @@ from PySide6 import QtCore, QtGui, QtWidgets
 class KeyWheelWidget(QtWidgets.QWidget):
     keySelected = QtCore.Signal(str)
     keyToggled = QtCore.Signal(str, bool)
+    clearRequested = QtCore.Signal()
 
     def __init__(self, parent: QtWidgets.QWidget | None = None) -> None:
         super().__init__(parent)
@@ -33,6 +34,7 @@ class KeyWheelWidget(QtWidgets.QWidget):
         self._hover_key: str | None = None
         self._selected_keys: set[str] = set()
         self._active_key: str | None = None
+        self._counts: dict[str, int] = {}
 
     def paintEvent(self, event: QtGui.QPaintEvent) -> None:  # noqa: N802
         painter = QtGui.QPainter(self)
@@ -76,7 +78,8 @@ class KeyWheelWidget(QtWidgets.QWidget):
         if hover_key != self._hover_key:
             self._hover_key = hover_key
             if hover_key:
-                self.setToolTip(hover_key)
+                count = self._counts.get(hover_key, 0)
+                self.setToolTip(f"{hover_key} - {count} tracks")
             else:
                 self.setToolTip("")
             self.update()
@@ -91,6 +94,12 @@ class KeyWheelWidget(QtWidgets.QWidget):
 
     def mousePressEvent(self, event: QtGui.QMouseEvent) -> None:  # noqa: N802
         if event.button() == QtCore.Qt.LeftButton:
+            if self._is_in_core(event.position()):
+                self._selected_keys.clear()
+                self.clearRequested.emit()
+                self.update()
+                super().mousePressEvent(event)
+                return
             key = self._key_from_pos(event.position())
             if key:
                 if key in self._selected_keys:
@@ -115,6 +124,9 @@ class KeyWheelWidget(QtWidgets.QWidget):
     def set_active_key(self, key: str | None) -> None:
         self._active_key = key
         self.update()
+
+    def set_counts(self, counts: dict[str, int]) -> None:
+        self._counts = dict(counts)
 
     @classmethod
     def color_for_key(cls, key: str) -> QtGui.QColor | None:
@@ -169,6 +181,12 @@ class KeyWheelWidget(QtWidgets.QWidget):
         core = rect.adjusted(core_margin, core_margin, -core_margin, -core_margin)
         center = outer.center()
         return center, outer.width() * 0.5, inner.width() * 0.5, core.width() * 0.5
+
+    def _is_in_core(self, pos: QtCore.QPointF) -> bool:
+        center, _outer_radius, _inner_radius, core_radius = self._geometry()
+        dx = pos.x() - center.x()
+        dy = center.y() - pos.y()
+        return math.hypot(dx, dy) <= core_radius
 
     def _key_from_pos(self, pos: QtCore.QPointF) -> str | None:
         center, outer_radius, inner_radius, core_radius = self._geometry()

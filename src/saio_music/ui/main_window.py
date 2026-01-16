@@ -144,6 +144,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         key_wheel = KeyWheelWidget()
         key_wheel.keyToggled.connect(self._toggle_key_filter)
+        key_wheel.clearRequested.connect(self._clear_key_filter)
         layout.addWidget(key_wheel, alignment=QtCore.Qt.AlignHCenter)
         self._key_wheel = key_wheel
 
@@ -391,6 +392,7 @@ class MainWindow(QtWidgets.QMainWindow):
             progress.close()
             self._save_cache()
             self._update_tracks_count()
+            self._refresh_key_counts()
 
     def _select_track_row(self, row: int, column: int) -> None:
         if self._tracks_table is None:
@@ -441,6 +443,22 @@ class MainWindow(QtWidgets.QMainWindow):
         for row in range(self._tracks_table.rowCount()):
             self._tracks_table.setRowHidden(row, False)
         self._update_tracks_count()
+        self._refresh_key_counts()
+
+    def _refresh_key_counts(self) -> None:
+        if self._tracks_table is None or self._key_wheel is None:
+            return
+        counts: dict[str, int] = {}
+        for row in range(self._tracks_table.rowCount()):
+            item = self._tracks_table.item(row, 5)
+            if item is None:
+                continue
+            value = item.data(QtCore.Qt.UserRole)
+            key = str(value).strip().upper()
+            if not key:
+                continue
+            counts[key] = counts.get(key, 0) + 1
+        self._key_wheel.set_counts(counts)
 
     def _camelot_color(self, key: str | None) -> QtGui.QColor | None:
         if not key:
