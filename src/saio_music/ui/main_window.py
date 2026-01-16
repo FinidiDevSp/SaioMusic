@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import json
+import re
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -63,6 +64,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self._bpm_chip: QtWidgets.QLabel | None = None
         self._energy_chip: QtWidgets.QLabel | None = None
         self._duration_ms = 0
+        self._active_key_filter: str | None = None
+        self._active_key_filters: set[str] = set()
+        self._key_wheel: KeyWheelWidget | None = None
 
         central = QtWidgets.QWidget()
         root = QtWidgets.QVBoxLayout(central)
@@ -139,7 +143,10 @@ class MainWindow(QtWidgets.QMainWindow):
         layout.setSpacing(16)
 
         key_wheel = KeyWheelWidget()
+        key_wheel.keyToggled.connect(self._toggle_key_filter)
+        key_wheel.clearRequested.connect(self._clear_key_filter)
         layout.addWidget(key_wheel, alignment=QtCore.Qt.AlignHCenter)
+        self._key_wheel = key_wheel
 
         add_tracks = QtWidgets.QPushButton("ADD TRACKS")
         add_tracks.setObjectName("primaryButton")
@@ -270,6 +277,10 @@ class MainWindow(QtWidgets.QMainWindow):
         search.setPlaceholderText("Search your Analysis Queue")
         search.setObjectName("searchInput")
         search_row.addWidget(search, 1)
+        clear_filter = QtWidgets.QPushButton("CLEAR FILTER")
+        clear_filter.setObjectName("ghostButton")
+        clear_filter.clicked.connect(self._clear_key_filter)
+        search_row.addWidget(clear_filter)
         search_row.addStretch(1)
         tracks_label = QtWidgets.QLabel("0 TRACKS")
         search_row.addWidget(tracks_label)
@@ -381,6 +392,7 @@ class MainWindow(QtWidgets.QMainWindow):
             progress.close()
             self._save_cache()
             self._update_tracks_count()
+            self._refresh_key_counts()
 
     def _select_track_row(self, row: int, column: int) -> None:
         if self._tracks_table is None:
@@ -392,6 +404,73 @@ class MainWindow(QtWidgets.QMainWindow):
         if self._tracks_table is None:
             return
         self._tracks_table.clearSelection()
+
+    def _toggle_key_filter(self, key: str, enabled: bool) -> None:
+        if self._tracks_table is None:
+            return
+        if enabled:
+            self._active_key_filters.add(key)
+        else:
+            self._active_key_filters.discard(key)
+
+        if self._key_wheel is not None:
+            self._key_wheel.set_selected_keys(self._active_key_filters)
+
+        if not self._active_key_filters:
+            for row in range(self._tracks_table.rowCount()):
+                self._tracks_table.setRowHidden(row, False)
+            self._update_tracks_count()
+            return
+
+        for row in range(self._tracks_table.rowCount()):
+            item = self._tracks_table.item(row, 5)
+            if item is None:
+                self._tracks_table.setRowHidden(row, True)
+                continue
+            value = item.data(QtCore.Qt.UserRole)
+            value = str(value).strip().upper()
+            match = value in {key.upper() for key in self._active_key_filters}
+            self._tracks_table.setRowHidden(row, not match)
+
+        self._update_tracks_count()
+
+    def _clear_key_filter(self) -> None:
+        if self._tracks_table is None:
+            return
+        self._active_key_filters.clear()
+        if self._key_wheel is not None:
+            self._key_wheel.set_selected_keys(set())
+        for row in range(self._tracks_table.rowCount()):
+            self._tracks_table.setRowHidden(row, False)
+        self._update_tracks_count()
+        self._refresh_key_counts()
+
+    def _refresh_key_counts(self) -> None:
+        if self._tracks_table is None or self._key_wheel is None:
+            return
+        counts: dict[str, int] = {}
+        for row in range(self._tracks_table.rowCount()):
+            item = self._tracks_table.item(row, 5)
+            if item is None:
+                continue
+            value = item.data(QtCore.Qt.UserRole)
+            key = str(value).strip().upper()
+            if not key:
+                continue
+            counts[key] = counts.get(key, 0) + 1
+        self._key_wheel.set_counts(counts)
+
+    def _camelot_color(self, key: str | None) -> QtGui.QColor | None:
+        if not key:
+            return None
+        return KeyWheelWidget.color_for_key(key)
+
+    def _normalize_camelot_key(self, value: object) -> str | None:
+        text = self._coerce_text(value) or ""
+        match = re.search(r"\b(1[0-2]|[1-9])\s*([ABab])\b", text)
+        if not match:
+            return None
+        return f"{int(match.group(1))}{match.group(2).upper()}"
 
     def _play_track_for_row(self, row: int) -> None:
         if self._tracks_table is None:
@@ -409,7 +488,11 @@ class MainWindow(QtWidgets.QMainWindow):
     def _update_tracks_count(self) -> None:
         if self._tracks_table is None or self._tracks_count is None:
             return
-        self._tracks_count.setText(f"{self._tracks_table.rowCount()} TRACKS")
+        visible = 0
+        for row in range(self._tracks_table.rowCount()):
+            if not self._tracks_table.isRowHidden(row):
+                visible += 1
+        self._tracks_count.setText(f"{visible} TRACKS")
 
     def _toggle_playback(self) -> None:
         if self._player.playbackState() == QtMultimedia.QMediaPlayer.PlayingState:
@@ -458,6 +541,9 @@ class MainWindow(QtWidgets.QMainWindow):
     def _play_track(self, path: Path, tags: dict[str, str | bytes | None]) -> None:
         self._player.setSource(QtCore.QUrl.fromLocalFile(str(path)))
         self._player.play()
+        camelot_key = self._normalize_camelot_key(tags.get("comments"))
+        if self._key_wheel is not None:
+            self._key_wheel.set_active_key(camelot_key)
         self._update_now_playing(path, tags)
         self._load_waveform(path)
 
@@ -690,6 +776,11 @@ class MainWindow(QtWidgets.QMainWindow):
 
         key_item = QtWidgets.QTableWidgetItem(key_result)
         key_item.setTextAlignment(QtCore.Qt.AlignCenter)
+        normalized_key = self._normalize_camelot_key(key_result)
+        key_item.setData(QtCore.Qt.UserRole, normalized_key or "")
+        key_color = self._camelot_color(normalized_key)
+        if key_color is not None:
+            key_item.setBackground(key_color)
         self._tracks_table.setItem(row, 5, key_item)
 
         energy_item = QtWidgets.QTableWidgetItem(energy)
@@ -1036,6 +1127,13 @@ class MainWindow(QtWidgets.QMainWindow):
             border: 1px solid #e2e8f0;
             border-radius: 8px;
             padding: 6px 10px;
+        }
+        #ghostButton {
+            background: #e0f2fe;
+            color: #0369a1;
+            border-radius: 6px;
+            padding: 4px 10px;
+            font-weight: 600;
         }
         #waveformStatus {
             color: #0f7cc4;

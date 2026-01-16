@@ -8,23 +8,33 @@ from PySide6 import QtCore, QtGui, QtWidgets
 
 
 class KeyWheelWidget(QtWidgets.QWidget):
+    keySelected = QtCore.Signal(str)
+    keyToggled = QtCore.Signal(str, bool)
+    clearRequested = QtCore.Signal()
+
     def __init__(self, parent: QtWidgets.QWidget | None = None) -> None:
         super().__init__(parent)
-        self.setMinimumSize(180, 180)
+        self.setMinimumSize(190, 190)
+        self.setMouseTracking(True)
         self._colors = [
-            "#5ad0ff",
-            "#47b3ff",
-            "#3b90ff",
-            "#5e76ff",
-            "#8a6bff",
-            "#b366ff",
-            "#d266ff",
-            "#f35cb8",
-            "#ff6b7a",
-            "#ff8a5c",
-            "#ffb74b",
-            "#ffd84b",
+            "#f8d84b",
+            "#f6b447",
+            "#f38d4a",
+            "#ef6b5f",
+            "#e85f7c",
+            "#d364a5",
+            "#a76bd6",
+            "#7c7be8",
+            "#5a8fe9",
+            "#52a9e6",
+            "#57c7e8",
+            "#6fe2e0",
         ]
+        self._order = [12, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
+        self._hover_key: str | None = None
+        self._selected_keys: set[str] = set()
+        self._active_key: str | None = None
+        self._counts: dict[str, int] = {}
 
     def paintEvent(self, event: QtGui.QPaintEvent) -> None:  # noqa: N802
         painter = QtGui.QPainter(self)
@@ -32,18 +42,289 @@ class KeyWheelWidget(QtWidgets.QWidget):
 
         size = min(self.width(), self.height())
         rect = QtCore.QRectF(6, 6, size - 12, size - 12)
-        span = 360 / len(self._colors)
+        span = 360 / 12
         start = 90
         painter.setPen(QtCore.Qt.NoPen)
-        for index, color in enumerate(self._colors):
-            painter.setBrush(QtGui.QColor(color))
-            angle = start - (index * span)
-            painter.drawPie(rect, int(angle * 16), int(-span * 16))
 
-        inner_margin = rect.width() * 0.26
+        outer_margin = rect.width() * 0.06
+        outer = rect.adjusted(outer_margin, outer_margin, -outer_margin, -outer_margin)
+        inner_margin = rect.width() * 0.22
         inner = rect.adjusted(inner_margin, inner_margin, -inner_margin, -inner_margin)
-        painter.setBrush(QtGui.QColor("#f3f6fb"))
-        painter.drawEllipse(inner)
+        core_margin = rect.width() * 0.42
+        core = rect.adjusted(core_margin, core_margin, -core_margin, -core_margin)
+
+        for index, _key_num in enumerate(self._order):
+            angle = start - (index * span)
+            outer_color = QtGui.QColor(self._colors[index])
+            inner_color = outer_color.lighter(115)
+            painter.setBrush(outer_color)
+            painter.drawPie(outer, int(angle * 16), int(-span * 16))
+            painter.setBrush(inner_color)
+            painter.drawPie(inner, int(angle * 16), int(-span * 16))
+
+        painter.setBrush(QtGui.QColor("#f4f7fb"))
+        painter.drawEllipse(core)
+
+        if self._hover_key:
+            self._draw_highlight(painter, outer, inner, start, span, self._hover_key)
+        for key in self._selected_keys:
+            self._draw_highlight(painter, outer, inner, start, span, key, alpha=0.22)
+        if self._active_key:
+            self._draw_active_marker(painter, outer, start, span, self._active_key)
+        if self._is_in_core(self.mapFromGlobal(QtGui.QCursor.pos())):
+            self._draw_core_highlight(painter, core)
+        self._draw_labels(painter, outer, inner, start, span)
+        self._draw_core_label(painter, core)
+
+    def mouseMoveEvent(self, event: QtGui.QMouseEvent) -> None:  # noqa: N802
+        hover_key = self._key_from_pos(event.position())
+        if hover_key != self._hover_key:
+            self._hover_key = hover_key
+            if hover_key:
+                count = self._counts.get(hover_key, 0)
+                self.setToolTip(f"{hover_key} - {count} tracks")
+            else:
+                self.setToolTip("")
+            self.update()
+        super().mouseMoveEvent(event)
+
+    def leaveEvent(self, event: QtCore.QEvent) -> None:  # noqa: N802
+        if self._hover_key is not None:
+            self._hover_key = None
+            self.setToolTip("")
+            self.update()
+        super().leaveEvent(event)
+
+    def mousePressEvent(self, event: QtGui.QMouseEvent) -> None:  # noqa: N802
+        if event.button() == QtCore.Qt.LeftButton:
+            if self._is_in_core(event.position()):
+                self._selected_keys.clear()
+                self.clearRequested.emit()
+                self.update()
+                super().mousePressEvent(event)
+                return
+            key = self._key_from_pos(event.position())
+            if key:
+                if key in self._selected_keys:
+                    self._selected_keys.remove(key)
+                    selected = False
+                else:
+                    self._selected_keys.add(key)
+                    selected = True
+                self.keyToggled.emit(key, selected)
+                self.keySelected.emit(key)
+                self.update()
+        super().mousePressEvent(event)
+
+    def set_selected_key(self, key: str | None) -> None:
+        self._selected_keys = {key} if key else set()
+        self.update()
+
+    def set_selected_keys(self, keys: set[str]) -> None:
+        self._selected_keys = set(keys)
+        self.update()
+
+    def set_active_key(self, key: str | None) -> None:
+        self._active_key = key
+        self.update()
+
+    def set_counts(self, counts: dict[str, int]) -> None:
+        self._counts = dict(counts)
+
+    @classmethod
+    def color_for_key(cls, key: str) -> QtGui.QColor | None:
+        parsed = cls._parse_key(key)
+        if parsed is None:
+            return None
+        number, _mode = parsed
+        order = [12, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
+        colors = [
+            "#f8d84b",
+            "#f6b447",
+            "#f38d4a",
+            "#ef6b5f",
+            "#e85f7c",
+            "#d364a5",
+            "#a76bd6",
+            "#7c7be8",
+            "#5a8fe9",
+            "#52a9e6",
+            "#57c7e8",
+            "#6fe2e0",
+        ]
+        try:
+            index = order.index(number)
+        except ValueError:
+            return None
+        return QtGui.QColor(colors[index])
+
+    @staticmethod
+    def _parse_key(key: str) -> tuple[int, str] | None:
+        key = key.strip().upper()
+        if not key:
+            return None
+        if key[-1] not in {"A", "B"}:
+            return None
+        number_str = key[:-1]
+        if not number_str.isdigit():
+            return None
+        number = int(number_str)
+        if number < 1 or number > 12:
+            return None
+        return number, key[-1]
+
+    def _geometry(self) -> tuple[QtCore.QPointF, float, float, float]:
+        size = min(self.width(), self.height())
+        rect = QtCore.QRectF(6, 6, size - 12, size - 12)
+        outer_margin = rect.width() * 0.06
+        inner_margin = rect.width() * 0.22
+        core_margin = rect.width() * 0.42
+        outer = rect.adjusted(outer_margin, outer_margin, -outer_margin, -outer_margin)
+        inner = rect.adjusted(inner_margin, inner_margin, -inner_margin, -inner_margin)
+        core = rect.adjusted(core_margin, core_margin, -core_margin, -core_margin)
+        center = outer.center()
+        return center, outer.width() * 0.5, inner.width() * 0.5, core.width() * 0.5
+
+    def _is_in_core(self, pos: QtCore.QPointF) -> bool:
+        center, _outer_radius, _inner_radius, core_radius = self._geometry()
+        dx = pos.x() - center.x()
+        dy = center.y() - pos.y()
+        return math.hypot(dx, dy) <= core_radius
+
+    def _key_from_pos(self, pos: QtCore.QPointF) -> str | None:
+        center, outer_radius, inner_radius, core_radius = self._geometry()
+        dx = pos.x() - center.x()
+        dy = center.y() - pos.y()
+        dist = math.hypot(dx, dy)
+        if dist < core_radius or dist > outer_radius:
+            return None
+        angle = math.degrees(math.atan2(dy, dx))
+        angle = (angle + 360) % 360
+        start = 90
+        span = 360 / 12
+        idx = int(((start - angle) % 360) / span)
+        key_number = self._order[idx]
+        mode = "B" if dist >= inner_radius else "A"
+        return f"{key_number}{mode}"
+
+    def _draw_highlight(
+        self,
+        painter: QtGui.QPainter,
+        outer: QtCore.QRectF,
+        inner: QtCore.QRectF,
+        start: float,
+        span: float,
+        key: str,
+        alpha: float = 0.35,
+    ) -> None:
+        parsed = self._parse_key(key)
+        if parsed is None:
+            return
+        key_number, mode = parsed
+        try:
+            index = self._order.index(key_number)
+        except ValueError:
+            return
+        angle = start - (index * span)
+        rect = outer if mode == "B" else inner
+        painter.save()
+        painter.setPen(QtCore.Qt.NoPen)
+        color = QtGui.QColor("#ffffff")
+        color.setAlphaF(alpha)
+        painter.setBrush(color)
+        painter.drawPie(rect, int(angle * 16), int(-span * 16))
+        painter.restore()
+
+    def _draw_active_marker(
+        self,
+        painter: QtGui.QPainter,
+        outer: QtCore.QRectF,
+        start: float,
+        span: float,
+        key: str,
+    ) -> None:
+        parsed = self._parse_key(key)
+        if parsed is None:
+            return
+        key_number, _mode = parsed
+        try:
+            index = self._order.index(key_number)
+        except ValueError:
+            return
+        angle_deg = start - (index * span) - (span / 2)
+        angle = math.radians(angle_deg)
+        center = outer.center()
+        radius = outer.width() * 0.5
+        outer_pos = QtCore.QPointF(
+            center.x() + math.cos(angle) * (radius * 0.95),
+            center.y() - math.sin(angle) * (radius * 0.95),
+        )
+        painter.save()
+        painter.setBrush(QtGui.QColor("#0f7cc4"))
+        painter.setPen(QtCore.Qt.NoPen)
+        painter.drawEllipse(outer_pos, 4, 4)
+        painter.restore()
+
+    def _draw_core_highlight(
+        self, painter: QtGui.QPainter, core: QtCore.QRectF
+    ) -> None:
+        painter.save()
+        painter.setPen(QtCore.Qt.NoPen)
+        color = QtGui.QColor("#dbeafe")
+        color.setAlphaF(0.8)
+        painter.setBrush(color)
+        painter.drawEllipse(core.adjusted(2, 2, -2, -2))
+        painter.restore()
+
+    def _draw_core_label(self, painter: QtGui.QPainter, core: QtCore.QRectF) -> None:
+        painter.save()
+        painter.setPen(QtGui.QPen(QtGui.QColor("#0f172a")))
+        painter.setFont(QtGui.QFont("Bahnschrift", 9, QtGui.QFont.Bold))
+        painter.drawText(core, QtCore.Qt.AlignCenter, "CF")
+        painter.restore()
+
+    def _draw_labels(
+        self,
+        painter: QtGui.QPainter,
+        outer: QtCore.QRectF,
+        inner: QtCore.QRectF,
+        start: float,
+        span: float,
+    ) -> None:
+        painter.save()
+        painter.setPen(QtGui.QPen(QtGui.QColor("#0f172a")))
+        outer_radius = outer.width() * 0.5
+        inner_radius = inner.width() * 0.5
+        center = outer.center()
+        outer_font = QtGui.QFont("Bahnschrift", 8, QtGui.QFont.Bold)
+        inner_font = QtGui.QFont("Bahnschrift", 8)
+
+        for index, key_num in enumerate(self._order):
+            angle_deg = start - (index * span) - (span / 2)
+            angle = math.radians(angle_deg)
+            outer_pos = QtCore.QPointF(
+                center.x() + math.cos(angle) * (outer_radius * 0.82),
+                center.y() - math.sin(angle) * (outer_radius * 0.82),
+            )
+            inner_pos = QtCore.QPointF(
+                center.x() + math.cos(angle) * (inner_radius * 0.82),
+                center.y() - math.sin(angle) * (inner_radius * 0.82),
+            )
+
+            painter.setFont(outer_font)
+            self._draw_text(painter, outer_pos, f"{key_num}B")
+            painter.setFont(inner_font)
+            self._draw_text(painter, inner_pos, f"{key_num}A")
+
+        painter.restore()
+
+    def _draw_text(
+        self, painter: QtGui.QPainter, position: QtCore.QPointF, text: str
+    ) -> None:
+        metrics = QtGui.QFontMetrics(painter.font())
+        rect = metrics.boundingRect(text)
+        rect.moveCenter(QtCore.QPoint(int(position.x()), int(position.y())))
+        painter.drawText(rect, QtCore.Qt.AlignCenter, text)
 
 
 class WaveformWidget(QtWidgets.QWidget):
