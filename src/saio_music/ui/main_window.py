@@ -204,43 +204,71 @@ class MainWindow(QtWidgets.QMainWindow):
         layout.setContentsMargins(16, 14, 16, 14)
         layout.setSpacing(10)
 
-        waveform = WaveformWidget()
-        waveform.seekRequested.connect(self._seek_to_ratio)
-        layout.addWidget(waveform)
-        self._waveform_widget = waveform
+        top_row = QtWidgets.QHBoxLayout()
+        top_row.setSpacing(10)
 
-        time_row = QtWidgets.QHBoxLayout()
-        waveform_status = QtWidgets.QLabel("")
-        waveform_status.setObjectName("waveformStatus")
-        waveform_status.setVisible(False)
-        time_row.addWidget(waveform_status)
-        time_row.addStretch(1)
-        time_label = QtWidgets.QLabel("00:00 / 00:00")
-        time_row.addWidget(time_label)
-        self._time_label = time_label
-        self._waveform_status = waveform_status
-        layout.addLayout(time_row)
-
-        now_row = QtWidgets.QHBoxLayout()
-        now_row.setSpacing(12)
+        transport = QtWidgets.QHBoxLayout()
+        transport.setSpacing(6)
 
         prev_btn = QtWidgets.QToolButton()
-        prev_btn.setObjectName("transportButton")
+        prev_btn.setObjectName("transportButtonSmall")
         prev_btn.setText("⏮")
         prev_btn.setToolTip("Previous track")
         prev_btn.clicked.connect(lambda: self._play_adjacent(-1))
 
         play = QtWidgets.QToolButton()
-        play.setObjectName("playButton")
+        play.setObjectName("playButtonLarge")
         play.setText("▶")
         play.setToolTip("Play/Pause")
         play.clicked.connect(self._toggle_playback)
 
         next_btn = QtWidgets.QToolButton()
-        next_btn.setObjectName("transportButton")
+        next_btn.setObjectName("transportButtonSmall")
         next_btn.setText("⏭")
         next_btn.setToolTip("Next track")
         next_btn.clicked.connect(lambda: self._play_adjacent(1))
+
+        transport.addWidget(prev_btn)
+        transport.addWidget(play)
+        transport.addWidget(next_btn)
+        transport_widget = QtWidgets.QWidget()
+        transport_widget.setObjectName("transportCluster")
+        transport_widget.setLayout(transport)
+
+        top_row.addWidget(transport_widget)
+
+        waveform = WaveformWidget()
+        waveform.seekRequested.connect(self._seek_to_ratio)
+        self._waveform_widget = waveform
+
+        overlay = QtWidgets.QGridLayout()
+        overlay.setContentsMargins(0, 0, 0, 0)
+        overlay.addWidget(waveform, 0, 0)
+
+        time_label = QtWidgets.QLabel("00:00 / 00:00")
+        time_label.setObjectName("timeOverlay")
+        time_label.setAttribute(QtCore.Qt.WA_TransparentForMouseEvents, True)
+        overlay.addWidget(
+            time_label, 0, 0, alignment=QtCore.Qt.AlignRight | QtCore.Qt.AlignBottom
+        )
+        self._time_label = time_label
+
+        waveform_status = QtWidgets.QLabel("")
+        waveform_status.setObjectName("waveformStatus")
+        waveform_status.setVisible(False)
+        overlay.addWidget(
+            waveform_status, 0, 0, alignment=QtCore.Qt.AlignLeft | QtCore.Qt.AlignBottom
+        )
+        self._waveform_status = waveform_status
+
+        waveform_widget = QtWidgets.QWidget()
+        waveform_widget.setLayout(overlay)
+        top_row.addWidget(waveform_widget, 1)
+
+        layout.addLayout(top_row)
+
+        now_row = QtWidgets.QHBoxLayout()
+        now_row.setSpacing(12)
 
         now_playing = QtWidgets.QVBoxLayout()
         now_label = QtWidgets.QLabel("NOW PLAYING")
@@ -297,9 +325,6 @@ class MainWindow(QtWidgets.QMainWindow):
         track_index.setObjectName("trackIndex")
         self._track_index_label = track_index
 
-        now_row.addWidget(prev_btn)
-        now_row.addWidget(play)
-        now_row.addWidget(next_btn)
         now_row.addWidget(cover)
         now_row.addWidget(now_playing_widget, 1)
         now_row.addWidget(info_wrap)
@@ -1258,23 +1283,28 @@ class MainWindow(QtWidgets.QMainWindow):
             border-radius: 12px;
             border: 1px solid #e2e8f0;
         }
-        #playButton {
+        #transportCluster {
+            background: #1f2933;
+            border-radius: 12px;
+            padding: 6px;
+        }
+        #playButtonLarge {
             background: #0ea5e9;
             color: white;
-            border-radius: 22px;
-            min-width: 44px;
-            min-height: 44px;
-            font-weight: 700;
-            font-size: 16px;
-        }
-        #transportButton {
-            background: #e2f1ff;
-            color: #0369a1;
             border-radius: 18px;
             min-width: 36px;
             min-height: 36px;
             font-weight: 700;
-            font-size: 14px;
+            font-size: 16px;
+        }
+        #transportButtonSmall {
+            background: #111827;
+            color: #e2e8f0;
+            border-radius: 14px;
+            min-width: 28px;
+            min-height: 28px;
+            font-weight: 700;
+            font-size: 12px;
         }
         #nowPlayingLabel {
             color: #64748b;
@@ -1284,6 +1314,12 @@ class MainWindow(QtWidgets.QMainWindow):
         #nowPlayingTitle {
             font-size: 16px;
             font-weight: 600;
+        }
+        #timeOverlay {
+            color: #0f172a;
+            background: rgba(255, 255, 255, 0.75);
+            padding: 2px 6px;
+            border-radius: 6px;
         }
         #infoBlock {
             background: #f1f5f9;
