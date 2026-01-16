@@ -1021,6 +1021,16 @@ class MainWindow(QtWidgets.QMainWindow):
     def _read_tags(self, path: Path) -> dict[str, str | bytes | None]:
         cached = self._get_cached_tags(path)
         if cached is not None:
+            if cached.get("cover_data") is None:
+                try:
+                    audio_full = MutagenFile(path)
+                except Exception:
+                    audio_full = None
+                if audio_full is not None:
+                    cover_data = self._extract_cover(audio_full)
+                    if cover_data:
+                        cached["cover_data"] = cover_data
+                        self._store_cached_tags(path, cached)
             return cached
 
         info: dict[str, str | bytes | None] = {
@@ -1096,8 +1106,8 @@ class MainWindow(QtWidgets.QMainWindow):
 
         cover_data = info.get("cover_data")
         cover_encoded = None
-        if isinstance(cover_data, bytes) and len(cover_data) <= 200_000:
-            cover_encoded = base64.b64encode(cover_data).decode("ascii")
+        if isinstance(cover_data, bytes):
+            cover_encoded = self._encode_cover_thumbnail(cover_data)
 
         entry = self._tags_cache.get(self._cache_key(path), {})
         if not isinstance(entry, dict):
@@ -1253,6 +1263,19 @@ class MainWindow(QtWidgets.QMainWindow):
             except Exception:
                 return None
         return None
+
+    def _encode_cover_thumbnail(self, cover_data: bytes) -> str | None:
+        image = QtGui.QImage.fromData(cover_data)
+        if image.isNull():
+            return None
+        thumb = image.scaled(
+            60, 60, QtCore.Qt.KeepAspectRatio, QtCore.Qt.SmoothTransformation
+        )
+        buffer = QtCore.QBuffer()
+        buffer.open(QtCore.QIODevice.WriteOnly)
+        if not thumb.save(buffer, "PNG"):
+            return None
+        return base64.b64encode(buffer.data()).decode("ascii")
 
     def _load_cache(self) -> dict[str, dict[str, object]]:
         cache_path = Path.cwd() / ".saiomusic_cache.json"
