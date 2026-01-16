@@ -683,11 +683,26 @@ class MainWindow(QtWidgets.QMainWindow):
                     self._now_playing_cover.setPixmap(pixmap)
                     self._animate_now_playing(self._now_playing_cover)
         if self._key_chip is not None:
-            self._key_chip.setText(self._coerce_text(tags.get("comments")) or "--")
+            key_value = self._coerce_text(tags.get("comments")) or "--"
+            self._key_chip.setText(key_value)
+            key_color = self._camelot_color(self._normalize_camelot_key(key_value))
+            if key_color is not None:
+                self._key_chip.setStyleSheet(
+                    f"background: {key_color.name()}; color: #0b1726; "
+                    "border-radius: 6px; padding: 2px 8px;"
+                )
+            else:
+                self._key_chip.setStyleSheet(
+                    "background: #8fe4ff; color: #075985; "
+                    "border-radius: 6px; padding: 2px 8px;"
+                )
+            self._animate_now_playing(self._key_chip)
         if self._bpm_chip is not None:
             self._bpm_chip.setText(self._coerce_text(tags.get("bpm")) or "--")
+            self._animate_now_playing(self._bpm_chip)
         if self._energy_chip is not None:
             self._energy_chip.setText("0")
+            self._animate_now_playing(self._energy_chip)
 
     def _load_waveform(self, path: Path) -> None:
         if self._waveform_widget is None:
