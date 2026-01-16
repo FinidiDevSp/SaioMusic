@@ -7,6 +7,23 @@ import math
 from PySide6 import QtCore, QtGui, QtWidgets
 
 
+class ActiveRowDelegate(QtWidgets.QStyledItemDelegate):
+    def paint(
+        self,
+        painter: QtGui.QPainter,
+        option: QtWidgets.QStyleOptionViewItem,
+        index: QtCore.QModelIndex,
+    ) -> None:
+        active = bool(index.sibling(index.row(), 0).data(QtCore.Qt.UserRole + 1))
+        if active:
+            painter.save()
+            painter.setBrush(QtGui.QColor("#e0f2fe"))
+            painter.setPen(QtCore.Qt.NoPen)
+            painter.drawRect(option.rect)
+            painter.restore()
+        super().paint(painter, option, index)
+
+
 class KeyWheelWidget(QtWidgets.QWidget):
     keySelected = QtCore.Signal(str)
     keyToggled = QtCore.Signal(str, bool)

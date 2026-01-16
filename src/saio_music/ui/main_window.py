@@ -14,7 +14,7 @@ from PySide6 import QtCore, QtGui, QtMultimedia, QtSvg, QtWidgets
 if TYPE_CHECKING:
     import numpy as np
 
-from saio_music.ui.widgets import KeyWheelWidget, WaveformWidget
+from saio_music.ui.widgets import ActiveRowDelegate, KeyWheelWidget, WaveformWidget
 
 
 def _make_chip(text: str, bg: str, fg: str = "#0f172a") -> QtWidgets.QLabel:
@@ -393,10 +393,11 @@ class MainWindow(QtWidgets.QMainWindow):
         table.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectRows)
         table.setSelectionMode(QtWidgets.QAbstractItemView.NoSelection)
         table.setAlternatingRowColors(True)
-        table.setShowGrid(False)
+        table.setShowGrid(True)
         table.setSortingEnabled(True)
         table.setFocusPolicy(QtCore.Qt.NoFocus)
         table.setObjectName("tracksTable")
+        table.setItemDelegate(ActiveRowDelegate(table))
         table.setIconSize(QtCore.QSize(30, 30))
         table.setColumnWidth(0, 44)
         table.cellClicked.connect(self._clear_track_selection)
@@ -488,7 +489,14 @@ class MainWindow(QtWidgets.QMainWindow):
     def _select_track_row(self, row: int, column: int) -> None:
         if self._tracks_table is None:
             return
-        self._tracks_table.clearSelection()
+        for index in range(self._tracks_table.rowCount()):
+            item = self._tracks_table.item(index, 0)
+            if item is not None:
+                item.setData(QtCore.Qt.UserRole + 1, False)
+        active_item = self._tracks_table.item(row, 0)
+        if active_item is not None:
+            active_item.setData(QtCore.Qt.UserRole + 1, True)
+        self._tracks_table.viewport().update()
         self._current_row = row
         self._play_track_for_row(row)
 
@@ -992,6 +1000,7 @@ class MainWindow(QtWidgets.QMainWindow):
         cover_icon = self._cover_icon(cover_data, row)
         cover_item.setIcon(cover_icon)
         cover_item.setData(QtCore.Qt.UserRole, str(path))
+        cover_item.setData(QtCore.Qt.UserRole + 1, False)
         self._tracks_table.setItem(row, 0, cover_item)
 
         artist = tags.get("artist") or path.stem
@@ -1458,7 +1467,7 @@ class MainWindow(QtWidgets.QMainWindow):
         #tracksTable {
             background: white;
             border-radius: 10px;
-            gridline-color: transparent;
+            gridline-color: #e5eef7;
             alternate-background-color: #f8fbff;
             selection-background-color: #e0f2fe;
             selection-color: #0f172a;
