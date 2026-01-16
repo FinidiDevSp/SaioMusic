@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from mutagen import File as MutagenFile
-from PySide6 import QtCore, QtGui, QtMultimedia, QtWidgets
+from PySide6 import QtCore, QtGui, QtMultimedia, QtSvg, QtWidgets
 
 if TYPE_CHECKING:
     import numpy as np
@@ -67,6 +67,15 @@ class MainWindow(QtWidgets.QMainWindow):
         self._active_key_filter: str | None = None
         self._active_key_filters: set[str] = set()
         self._key_wheel: KeyWheelWidget | None = None
+        self._play_button: QtWidgets.QToolButton | None = None
+        self._now_playing_cover: QtWidgets.QLabel | None = None
+        self._current_row: int | None = None
+        self._prev_button: QtWidgets.QToolButton | None = None
+        self._next_button: QtWidgets.QToolButton | None = None
+        self._track_index_label: QtWidgets.QLabel | None = None
+        self._play_icon: QtGui.QIcon | None = None
+        self._pause_icon: QtGui.QIcon | None = None
+        self._full_title: str = ""
 
         central = QtWidgets.QWidget()
         root = QtWidgets.QVBoxLayout(central)
@@ -84,6 +93,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.setCentralWidget(central)
         self._player.positionChanged.connect(self._on_position_changed)
         self._player.durationChanged.connect(self._on_duration_changed)
+        self._player.playbackStateChanged.connect(self._on_playback_state_changed)
 
     def _build_top_bar(self) -> QtWidgets.QWidget:
         bar = QtWidgets.QWidget()
@@ -198,53 +208,99 @@ class MainWindow(QtWidgets.QMainWindow):
         layout.setSpacing(10)
 
         top_row = QtWidgets.QHBoxLayout()
-        controls = QtWidgets.QVBoxLayout()
-        play = QtWidgets.QPushButton(">")
-        play.setObjectName("playButton")
-        play.clicked.connect(self._toggle_playback)
-        controls.addWidget(play)
-        controls.addSpacing(6)
-        nav = QtWidgets.QHBoxLayout()
-        prev_btn = QtWidgets.QToolButton()
-        prev_btn.setText("<<")
-        next_btn = QtWidgets.QToolButton()
-        next_btn.setText(">>")
-        nav.addWidget(prev_btn)
-        nav.addWidget(next_btn)
-        controls.addLayout(nav)
-        controls_widget = QtWidgets.QWidget()
-        controls_widget.setLayout(controls)
+        top_row.setSpacing(10)
 
-        waveform_column = QtWidgets.QVBoxLayout()
+        transport = QtWidgets.QHBoxLayout()
+        transport.setSpacing(6)
+
+        prev_btn = QtWidgets.QToolButton()
+        prev_btn.setObjectName("transportButtonSmall")
+        prev_btn.setIcon(self._make_svg_icon("prev", 16))
+        prev_btn.setIconSize(QtCore.QSize(16, 16))
+        prev_btn.setToolTip("Previous track")
+        prev_btn.clicked.connect(lambda: self._play_adjacent(-1))
+
+        play = QtWidgets.QToolButton()
+        play.setObjectName("playButtonLarge")
+        self._play_icon = self._make_svg_icon("play", 20, "#ffffff")
+        self._pause_icon = self._make_svg_icon("pause", 20, "#ffffff")
+        play.setIcon(self._play_icon)
+        play.setIconSize(QtCore.QSize(20, 20))
+        play.setToolTip("Play/Pause")
+        play.clicked.connect(self._toggle_playback)
+
+        next_btn = QtWidgets.QToolButton()
+        next_btn.setObjectName("transportButtonSmall")
+        next_btn.setIcon(self._make_svg_icon("next", 16))
+        next_btn.setIconSize(QtCore.QSize(16, 16))
+        next_btn.setToolTip("Next track")
+        next_btn.clicked.connect(lambda: self._play_adjacent(1))
+
+        transport.addWidget(prev_btn)
+        transport.addWidget(play)
+        transport.addWidget(next_btn)
+        transport_widget = QtWidgets.QWidget()
+        transport_widget.setObjectName("transportCluster")
+        transport_widget.setLayout(transport)
+
+        top_row.addWidget(transport_widget)
+
         waveform = WaveformWidget()
         waveform.seekRequested.connect(self._seek_to_ratio)
-        waveform_column.addWidget(waveform)
-        waveform_widget = QtWidgets.QWidget()
-        waveform_widget.setLayout(waveform_column)
         self._waveform_widget = waveform
 
-        top_row.addWidget(controls_widget)
-        top_row.addSpacing(10)
+        overlay = QtWidgets.QGridLayout()
+        overlay.setContentsMargins(0, 0, 0, 0)
+        overlay.addWidget(waveform, 0, 0)
+
+        time_label = QtWidgets.QLabel("00:00 / 00:00")
+        time_label.setObjectName("timeOverlay")
+        time_label.setAttribute(QtCore.Qt.WA_TransparentForMouseEvents, True)
+        overlay.addWidget(
+            time_label, 0, 0, alignment=QtCore.Qt.AlignRight | QtCore.Qt.AlignBottom
+        )
+        self._time_label = time_label
+
+        waveform_status = QtWidgets.QLabel("")
+        waveform_status.setObjectName("waveformStatus")
+        waveform_status.setVisible(False)
+        overlay.addWidget(
+            waveform_status, 0, 0, alignment=QtCore.Qt.AlignLeft | QtCore.Qt.AlignBottom
+        )
+        self._waveform_status = waveform_status
+
+        waveform_widget = QtWidgets.QWidget()
+        waveform_widget.setLayout(overlay)
         top_row.addWidget(waveform_widget, 1)
 
         layout.addLayout(top_row)
 
-        time_row = QtWidgets.QHBoxLayout()
-        waveform_status = QtWidgets.QLabel("")
-        waveform_status.setObjectName("waveformStatus")
-        waveform_status.setVisible(False)
-        time_row.addWidget(waveform_status)
-        time_row.addStretch(1)
-        time_label = QtWidgets.QLabel("00:00 / 00:00")
-        time_row.addWidget(time_label)
-        self._time_label = time_label
-        self._waveform_status = waveform_status
-        layout.addLayout(time_row)
+        now_row = QtWidgets.QHBoxLayout()
+        now_row.setSpacing(12)
 
+        now_playing = QtWidgets.QVBoxLayout()
+        now_label = QtWidgets.QLabel("NOW PLAYING")
+        now_label.setObjectName("nowPlayingLabel")
         title = QtWidgets.QLabel("No track selected")
-        title.setStyleSheet("font-size: 18px; font-weight: 600;")
-        layout.addWidget(title)
+        title.setObjectName("nowPlayingTitle")
+        title.setSizePolicy(
+            QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Preferred
+        )
+        title.installEventFilter(self)
+        self._full_title = "No track selected"
+        now_playing.addWidget(now_label)
+        now_playing.addWidget(title)
+        now_playing_widget = QtWidgets.QWidget()
+        now_playing_widget.setLayout(now_playing)
+        now_playing_widget.setSizePolicy(
+            QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Preferred
+        )
         self._track_title = title
+
+        cover = QtWidgets.QLabel()
+        cover.setFixedSize(52, 52)
+        cover.setStyleSheet("background: #e2e8f0; border-radius: 10px;")
+        self._now_playing_cover = cover
 
         info_row = QtWidgets.QHBoxLayout()
         info_row.setSpacing(8)
@@ -257,12 +313,46 @@ class MainWindow(QtWidgets.QMainWindow):
         info_row.addWidget(QtWidgets.QLabel("BPM"))
         bpm_chip = _make_chip("--", "#e2e8f0", "#0f172a")
         info_row.addWidget(bpm_chip)
-        info_row.addStretch(1)
-        info_row.addWidget(QtWidgets.QLabel("VIRTUAL PIANO"))
-        layout.addLayout(info_row)
         self._key_chip = key_chip
         self._energy_chip = energy_chip
         self._bpm_chip = bpm_chip
+
+        info_wrap = QtWidgets.QWidget()
+        info_wrap.setObjectName("infoBlock")
+        info_wrap.setLayout(info_row)
+        info_wrap.setFixedWidth(230)
+
+        volume_layout = QtWidgets.QHBoxLayout()
+        volume_layout.setSpacing(6)
+        volume_icon = QtWidgets.QLabel("🔊")
+        volume_icon.setObjectName("volumeIcon")
+        volume_slider = QtWidgets.QSlider(QtCore.Qt.Horizontal)
+        volume_slider.setObjectName("volumeSlider")
+        volume_slider.setRange(0, 100)
+        volume_slider.setValue(70)
+        volume_slider.setFixedWidth(140)
+        volume_slider.valueChanged.connect(
+            lambda value: self._audio_output.setVolume(value / 100)
+        )
+        volume_layout.addWidget(volume_icon)
+        volume_layout.addWidget(volume_slider)
+        volume_widget = QtWidgets.QWidget()
+        volume_widget.setLayout(volume_layout)
+        volume_widget.setFixedWidth(190)
+
+        track_index = QtWidgets.QLabel("0 / 0")
+        track_index.setObjectName("trackIndex")
+        self._track_index_label = track_index
+
+        now_row.addWidget(cover)
+        now_row.addWidget(now_playing_widget, 1)
+        now_row.addWidget(info_wrap)
+        now_row.addWidget(volume_widget)
+        now_row.addWidget(track_index)
+        layout.addLayout(now_row)
+        self._play_button = play
+        self._prev_button = prev_btn
+        self._next_button = next_btn
 
         return panel
 
@@ -398,6 +488,7 @@ class MainWindow(QtWidgets.QMainWindow):
         if self._tracks_table is None:
             return
         self._tracks_table.clearSelection()
+        self._current_row = row
         self._play_track_for_row(row)
 
     def _clear_track_selection(self, row: int, column: int) -> None:
@@ -483,7 +574,43 @@ class MainWindow(QtWidgets.QMainWindow):
             return
         path = Path(str(path_value))
         tags = self._read_tags(path)
+        self._current_row = row
         self._play_track(path, tags)
+        self._update_track_position()
+
+    def _play_adjacent(self, step: int) -> None:
+        if self._tracks_table is None:
+            return
+        rows = [
+            row
+            for row in range(self._tracks_table.rowCount())
+            if not self._tracks_table.isRowHidden(row)
+        ]
+        if not rows:
+            return
+        if self._current_row not in rows:
+            target = rows[0]
+        else:
+            index = rows.index(self._current_row)
+            target = rows[(index + step) % len(rows)]
+        self._play_track_for_row(target)
+
+    def _update_track_position(self) -> None:
+        if self._tracks_table is None or self._track_index_label is None:
+            return
+        rows = [
+            row
+            for row in range(self._tracks_table.rowCount())
+            if not self._tracks_table.isRowHidden(row)
+        ]
+        if not rows:
+            self._track_index_label.setText("0 / 0")
+            return
+        if self._current_row not in rows:
+            self._track_index_label.setText(f"0 / {len(rows)}")
+            return
+        index = rows.index(self._current_row) + 1
+        self._track_index_label.setText(f"{index} / {len(rows)}")
 
     def _update_tracks_count(self) -> None:
         if self._tracks_table is None or self._tracks_count is None:
@@ -493,6 +620,8 @@ class MainWindow(QtWidgets.QMainWindow):
             if not self._tracks_table.isRowHidden(row):
                 visible += 1
         self._tracks_count.setText(f"{visible} TRACKS")
+        self._update_navigation_state(visible)
+        self._update_track_position()
 
     def _toggle_playback(self) -> None:
         if self._player.playbackState() == QtMultimedia.QMediaPlayer.PlayingState:
@@ -526,6 +655,25 @@ class MainWindow(QtWidgets.QMainWindow):
         minutes, seconds = divmod(total_seconds, 60)
         return f"{minutes:02d}:{seconds:02d}"
 
+    def _update_navigation_state(self, visible: int) -> None:
+        if self._prev_button is None or self._next_button is None:
+            return
+        enabled = visible > 1
+        self._prev_button.setEnabled(enabled)
+        self._next_button.setEnabled(enabled)
+
+    def _on_playback_state_changed(
+        self, state: QtMultimedia.QMediaPlayer.PlaybackState
+    ) -> None:
+        if self._play_button is None:
+            return
+        if state == QtMultimedia.QMediaPlayer.PlayingState:
+            if self._pause_icon is not None:
+                self._play_button.setIcon(self._pause_icon)
+        else:
+            if self._play_icon is not None:
+                self._play_button.setIcon(self._play_icon)
+
     def _set_waveform_status(self, text: str) -> None:
         if self._waveform_status is None:
             return
@@ -537,6 +685,59 @@ class MainWindow(QtWidgets.QMainWindow):
             return
         self._waveform_status.setVisible(False)
         self._waveform_status.setText("")
+
+    def _animate_now_playing(self, widget: QtWidgets.QWidget) -> None:
+        effect = widget.graphicsEffect()
+        if effect is None or not isinstance(effect, QtWidgets.QGraphicsOpacityEffect):
+            effect = QtWidgets.QGraphicsOpacityEffect(widget)
+            widget.setGraphicsEffect(effect)
+        animation = QtCore.QPropertyAnimation(effect, b"opacity", widget)
+        animation.setDuration(220)
+        animation.setStartValue(0.3)
+        animation.setEndValue(1.0)
+        animation.setEasingCurve(QtCore.QEasingCurve.OutCubic)
+        animation.start(QtCore.QAbstractAnimation.DeleteWhenStopped)
+
+    def _update_title_elide(self) -> None:
+        if self._track_title is None:
+            return
+        metrics = QtGui.QFontMetrics(self._track_title.font())
+        elided = metrics.elidedText(
+            self._full_title, QtCore.Qt.ElideRight, self._track_title.width()
+        )
+        self._track_title.setText(elided)
+
+    def eventFilter(  # noqa: N802
+        self, watched: QtCore.QObject, event: QtCore.QEvent
+    ) -> bool:
+        if watched is self._track_title and event.type() == QtCore.QEvent.Resize:
+            self._update_title_elide()
+        return super().eventFilter(watched, event)
+
+    def _make_svg_icon(
+        self, name: str, size: int, color: str = "#0f172a"
+    ) -> QtGui.QIcon:
+        paths = {
+            "play": "<polygon points='6,4 18,12 6,20'/>",
+            "pause": "<rect x='6' y='4' width='4' height='16'/>"
+            "<rect x='14' y='4' width='4' height='16'/>",
+            "prev": "<rect x='5' y='5' width='2' height='14'/>"
+            "<polygon points='19,4 9,12 19,20'/>",
+            "next": "<polygon points='5,4 15,12 5,20'/>"
+            "<rect x='17' y='5' width='2' height='14'/>",
+        }
+        path = paths.get(name, paths["play"])
+        svg = (
+            "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'>"
+            f"<g fill='{color}'>{path}</g></svg>"
+        )
+        renderer = QtSvg.QSvgRenderer(QtCore.QByteArray(svg.encode("utf-8")))
+        pixmap = QtGui.QPixmap(size, size)
+        pixmap.fill(QtCore.Qt.transparent)
+        painter = QtGui.QPainter(pixmap)
+        renderer.render(painter)
+        painter.end()
+        return QtGui.QIcon(pixmap)
 
     def _play_track(self, path: Path, tags: dict[str, str | bytes | None]) -> None:
         self._player.setSource(QtCore.QUrl.fromLocalFile(str(path)))
@@ -553,13 +754,43 @@ class MainWindow(QtWidgets.QMainWindow):
         title = self._coerce_text(tags.get("title")) or ""
         artist = self._coerce_text(tags.get("artist")) or path.stem
         if self._track_title is not None:
-            self._track_title.setText(f"{artist} - {title}".strip(" -"))
+            self._full_title = f"{artist} - {title}".strip(" -")
+            self._update_title_elide()
+            self._animate_now_playing(self._track_title)
+        if self._now_playing_cover is not None:
+            cover_data = tags.get("cover_data")
+            if isinstance(cover_data, bytes):
+                image = QtGui.QImage.fromData(cover_data)
+                if not image.isNull():
+                    pixmap = QtGui.QPixmap.fromImage(image).scaled(
+                        44,
+                        44,
+                        QtCore.Qt.KeepAspectRatio,
+                        QtCore.Qt.SmoothTransformation,
+                    )
+                    self._now_playing_cover.setPixmap(pixmap)
+                    self._animate_now_playing(self._now_playing_cover)
         if self._key_chip is not None:
-            self._key_chip.setText(self._coerce_text(tags.get("comments")) or "--")
+            key_value = self._coerce_text(tags.get("comments")) or "--"
+            self._key_chip.setText(key_value)
+            key_color = self._camelot_color(self._normalize_camelot_key(key_value))
+            if key_color is not None:
+                self._key_chip.setStyleSheet(
+                    f"background: {key_color.name()}; color: #0b1726; "
+                    "border-radius: 6px; padding: 2px 8px;"
+                )
+            else:
+                self._key_chip.setStyleSheet(
+                    "background: #8fe4ff; color: #075985; "
+                    "border-radius: 6px; padding: 2px 8px;"
+                )
+            self._animate_now_playing(self._key_chip)
         if self._bpm_chip is not None:
             self._bpm_chip.setText(self._coerce_text(tags.get("bpm")) or "--")
+            self._animate_now_playing(self._bpm_chip)
         if self._energy_chip is not None:
             self._energy_chip.setText("0")
+            self._animate_now_playing(self._energy_chip)
 
     def _load_waveform(self, path: Path) -> None:
         if self._waveform_widget is None:
@@ -1110,17 +1341,78 @@ class MainWindow(QtWidgets.QMainWindow):
             font-weight: 600;
         }
         #wavePanel {
-            background: white;
+            background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
+                stop:0 #ffffff, stop:1 #eef6ff);
             border-radius: 12px;
             border: 1px solid #e2e8f0;
         }
-        #playButton {
+        #transportCluster {
+            background: #ffffff;
+            border: 1px solid #e2e8f0;
+            border-radius: 12px;
+            padding: 6px;
+        }
+        #playButtonLarge {
             background: #0ea5e9;
             color: white;
-            border-radius: 22px;
-            min-width: 44px;
-            min-height: 44px;
+            border-radius: 18px;
+            min-width: 36px;
+            min-height: 36px;
             font-weight: 700;
+            font-size: 16px;
+        }
+        #transportButtonSmall {
+            background: #f1f5f9;
+            color: #0f172a;
+            border-radius: 14px;
+            min-width: 28px;
+            min-height: 28px;
+            font-weight: 700;
+            font-size: 12px;
+        }
+        #nowPlayingLabel {
+            color: #64748b;
+            font-size: 9px;
+            letter-spacing: 1px;
+        }
+        #nowPlayingTitle {
+            font-size: 16px;
+            font-weight: 600;
+        }
+        #timeOverlay {
+            color: #0f172a;
+            background: rgba(255, 255, 255, 0.75);
+            padding: 2px 6px;
+            border-radius: 6px;
+        }
+        #infoBlock {
+            background: #f1f5f9;
+            border-radius: 10px;
+            padding: 6px 10px;
+        }
+        #volumeIcon {
+            color: #0f7cc4;
+            font-weight: 700;
+        }
+        #volumeSlider::groove:horizontal {
+            background: #e2e8f0;
+            height: 6px;
+            border-radius: 3px;
+        }
+        #volumeSlider::sub-page:horizontal {
+            background: #0ea5e9;
+            border-radius: 3px;
+        }
+        #volumeSlider::handle:horizontal {
+            background: #0f7cc4;
+            width: 14px;
+            margin: -4px 0;
+            border-radius: 7px;
+        }
+        #trackIndex {
+            color: #64748b;
+            font-weight: 600;
+            padding-left: 6px;
         }
         #searchInput {
             background: white;
