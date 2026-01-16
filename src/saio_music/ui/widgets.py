@@ -71,7 +71,10 @@ class KeyWheelWidget(QtWidgets.QWidget):
             self._draw_highlight(painter, outer, inner, start, span, key, alpha=0.22)
         if self._active_key:
             self._draw_active_marker(painter, outer, start, span, self._active_key)
+        if self._is_in_core(self.mapFromGlobal(QtGui.QCursor.pos())):
+            self._draw_core_highlight(painter, core)
         self._draw_labels(painter, outer, inner, start, span)
+        self._draw_core_label(painter, core)
 
     def mouseMoveEvent(self, event: QtGui.QMouseEvent) -> None:  # noqa: N802
         hover_key = self._key_from_pos(event.position())
@@ -260,6 +263,24 @@ class KeyWheelWidget(QtWidgets.QWidget):
         painter.setBrush(QtGui.QColor("#0f7cc4"))
         painter.setPen(QtCore.Qt.NoPen)
         painter.drawEllipse(outer_pos, 4, 4)
+        painter.restore()
+
+    def _draw_core_highlight(
+        self, painter: QtGui.QPainter, core: QtCore.QRectF
+    ) -> None:
+        painter.save()
+        painter.setPen(QtCore.Qt.NoPen)
+        color = QtGui.QColor("#dbeafe")
+        color.setAlphaF(0.8)
+        painter.setBrush(color)
+        painter.drawEllipse(core.adjusted(2, 2, -2, -2))
+        painter.restore()
+
+    def _draw_core_label(self, painter: QtGui.QPainter, core: QtCore.QRectF) -> None:
+        painter.save()
+        painter.setPen(QtGui.QPen(QtGui.QColor("#0f172a")))
+        painter.setFont(QtGui.QFont("Bahnschrift", 9, QtGui.QFont.Bold))
+        painter.drawText(core, QtCore.Qt.AlignCenter, "CF")
         painter.restore()
 
     def _draw_labels(
