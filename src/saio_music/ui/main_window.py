@@ -198,20 +198,26 @@ class MainWindow(QtWidgets.QMainWindow):
         layout.setSpacing(10)
 
         top_row = QtWidgets.QHBoxLayout()
-        controls = QtWidgets.QVBoxLayout()
-        play = QtWidgets.QPushButton(">")
-        play.setObjectName("playButton")
-        play.clicked.connect(self._toggle_playback)
-        controls.addWidget(play)
-        controls.addSpacing(6)
-        nav = QtWidgets.QHBoxLayout()
+        controls = QtWidgets.QHBoxLayout()
         prev_btn = QtWidgets.QToolButton()
-        prev_btn.setText("<<")
+        prev_btn.setObjectName("transportButton")
+        prev_btn.setText("⏮")
+        prev_btn.setToolTip("Previous track")
+
+        play = QtWidgets.QToolButton()
+        play.setObjectName("playButton")
+        play.setText("▶")
+        play.setToolTip("Play/Pause")
+        play.clicked.connect(self._toggle_playback)
+
         next_btn = QtWidgets.QToolButton()
-        next_btn.setText(">>")
-        nav.addWidget(prev_btn)
-        nav.addWidget(next_btn)
-        controls.addLayout(nav)
+        next_btn.setObjectName("transportButton")
+        next_btn.setText("⏭")
+        next_btn.setToolTip("Next track")
+
+        controls.addWidget(prev_btn)
+        controls.addWidget(play)
+        controls.addWidget(next_btn)
         controls_widget = QtWidgets.QWidget()
         controls_widget.setLayout(controls)
 
@@ -1110,7 +1116,8 @@ class MainWindow(QtWidgets.QMainWindow):
             font-weight: 600;
         }
         #wavePanel {
-            background: white;
+            background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
+                stop:0 #ffffff, stop:1 #eef6ff);
             border-radius: 12px;
             border: 1px solid #e2e8f0;
         }
@@ -1121,6 +1128,16 @@ class MainWindow(QtWidgets.QMainWindow):
             min-width: 44px;
             min-height: 44px;
             font-weight: 700;
+            font-size: 16px;
+        }
+        #transportButton {
+            background: #e2f1ff;
+            color: #0369a1;
+            border-radius: 18px;
+            min-width: 36px;
+            min-height: 36px;
+            font-weight: 700;
+            font-size: 14px;
         }
         #searchInput {
             background: white;

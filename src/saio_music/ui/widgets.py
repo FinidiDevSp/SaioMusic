@@ -367,13 +367,10 @@ class WaveformWidget(QtWidgets.QWidget):
         painter.setRenderHint(QtGui.QPainter.Antialiasing)
 
         rect = self.rect().adjusted(6, 8, -6, -8)
-        gradient = QtGui.QLinearGradient(rect.topLeft(), rect.bottomRight())
-        gradient.setColorAt(0.0, QtGui.QColor("#b6efff"))
-        gradient.setColorAt(1.0, QtGui.QColor("#79c9ff"))
-        painter.fillRect(rect, gradient)
+        painter.fillRect(rect, QtGui.QColor("#f8fbff"))
 
         mid = rect.center().y()
-        bar_color = QtGui.QColor("#1aa6ff")
+        bar_color = QtGui.QColor("#0ea5e9")
         pen = QtGui.QPen(bar_color, 2)
         painter.setPen(pen)
 
