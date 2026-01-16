@@ -67,6 +67,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self._active_key_filter: str | None = None
         self._active_key_filters: set[str] = set()
         self._key_wheel: KeyWheelWidget | None = None
+        self._play_button: QtWidgets.QToolButton | None = None
+        self._now_playing_cover: QtWidgets.QLabel | None = None
 
         central = QtWidgets.QWidget()
         root = QtWidgets.QVBoxLayout(central)
@@ -84,6 +86,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.setCentralWidget(central)
         self._player.positionChanged.connect(self._on_position_changed)
         self._player.durationChanged.connect(self._on_duration_changed)
+        self._player.playbackStateChanged.connect(self._on_playback_state_changed)
 
     def _build_top_bar(self) -> QtWidgets.QWidget:
         bar = QtWidgets.QWidget()
@@ -199,6 +202,19 @@ class MainWindow(QtWidgets.QMainWindow):
 
         top_row = QtWidgets.QHBoxLayout()
         controls = QtWidgets.QHBoxLayout()
+        controls.setSpacing(8)
+
+        now_playing = QtWidgets.QVBoxLayout()
+        now_label = QtWidgets.QLabel("NOW PLAYING")
+        now_label.setObjectName("nowPlayingLabel")
+        cover = QtWidgets.QLabel()
+        cover.setFixedSize(44, 44)
+        cover.setStyleSheet("background: #e2e8f0; border-radius: 8px;")
+        now_playing.addWidget(now_label, alignment=QtCore.Qt.AlignHCenter)
+        now_playing.addWidget(cover, alignment=QtCore.Qt.AlignHCenter)
+        now_playing_widget = QtWidgets.QWidget()
+        now_playing_widget.setLayout(now_playing)
+
         prev_btn = QtWidgets.QToolButton()
         prev_btn.setObjectName("transportButton")
         prev_btn.setText("⏮")
@@ -215,11 +231,31 @@ class MainWindow(QtWidgets.QMainWindow):
         next_btn.setText("⏭")
         next_btn.setToolTip("Next track")
 
+        volume_layout = QtWidgets.QHBoxLayout()
+        volume_layout.setSpacing(6)
+        volume_icon = QtWidgets.QLabel("🔊")
+        volume_icon.setObjectName("volumeIcon")
+        volume_slider = QtWidgets.QSlider(QtCore.Qt.Horizontal)
+        volume_slider.setObjectName("volumeSlider")
+        volume_slider.setRange(0, 100)
+        volume_slider.setValue(70)
+        volume_slider.valueChanged.connect(
+            lambda value: self._audio_output.setVolume(value / 100)
+        )
+        volume_layout.addWidget(volume_icon)
+        volume_layout.addWidget(volume_slider)
+        volume_widget = QtWidgets.QWidget()
+        volume_widget.setLayout(volume_layout)
+
+        controls.addWidget(now_playing_widget)
         controls.addWidget(prev_btn)
         controls.addWidget(play)
         controls.addWidget(next_btn)
+        controls.addWidget(volume_widget)
         controls_widget = QtWidgets.QWidget()
         controls_widget.setLayout(controls)
+        self._play_button = play
+        self._now_playing_cover = cover
 
         waveform_column = QtWidgets.QVBoxLayout()
         waveform = WaveformWidget()
@@ -532,6 +568,16 @@ class MainWindow(QtWidgets.QMainWindow):
         minutes, seconds = divmod(total_seconds, 60)
         return f"{minutes:02d}:{seconds:02d}"
 
+    def _on_playback_state_changed(
+        self, state: QtMultimedia.QMediaPlayer.PlaybackState
+    ) -> None:
+        if self._play_button is None:
+            return
+        if state == QtMultimedia.QMediaPlayer.PlayingState:
+            self._play_button.setText("⏸")
+        else:
+            self._play_button.setText("▶")
+
     def _set_waveform_status(self, text: str) -> None:
         if self._waveform_status is None:
             return
@@ -560,6 +606,18 @@ class MainWindow(QtWidgets.QMainWindow):
         artist = self._coerce_text(tags.get("artist")) or path.stem
         if self._track_title is not None:
             self._track_title.setText(f"{artist} - {title}".strip(" -"))
+        if self._now_playing_cover is not None:
+            cover_data = tags.get("cover_data")
+            if isinstance(cover_data, bytes):
+                image = QtGui.QImage.fromData(cover_data)
+                if not image.isNull():
+                    pixmap = QtGui.QPixmap.fromImage(image).scaled(
+                        44,
+                        44,
+                        QtCore.Qt.KeepAspectRatio,
+                        QtCore.Qt.SmoothTransformation,
+                    )
+                    self._now_playing_cover.setPixmap(pixmap)
         if self._key_chip is not None:
             self._key_chip.setText(self._coerce_text(tags.get("comments")) or "--")
         if self._bpm_chip is not None:
@@ -1138,6 +1196,30 @@ class MainWindow(QtWidgets.QMainWindow):
             min-height: 36px;
             font-weight: 700;
             font-size: 14px;
+        }
+        #nowPlayingLabel {
+            color: #64748b;
+            font-size: 9px;
+            letter-spacing: 1px;
+        }
+        #volumeIcon {
+            color: #0f7cc4;
+            font-weight: 700;
+        }
+        #volumeSlider::groove:horizontal {
+            background: #e2e8f0;
+            height: 6px;
+            border-radius: 3px;
+        }
+        #volumeSlider::sub-page:horizontal {
+            background: #0ea5e9;
+            border-radius: 3px;
+        }
+        #volumeSlider::handle:horizontal {
+            background: #0f7cc4;
+            width: 14px;
+            margin: -4px 0;
+            border-radius: 7px;
         }
         #searchInput {
             background: white;
