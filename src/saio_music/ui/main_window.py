@@ -76,8 +76,6 @@ class MainWindow(QtWidgets.QMainWindow):
         self._play_icon: QtGui.QIcon | None = None
         self._pause_icon: QtGui.QIcon | None = None
         self._full_title: str = ""
-        self._volume_slider: QtWidgets.QSlider | None = None
-        self._volume_widget: QtWidgets.QWidget | None = None
 
         central = QtWidgets.QWidget()
         root = QtWidgets.QVBoxLayout(central)
@@ -341,10 +339,6 @@ class MainWindow(QtWidgets.QMainWindow):
         volume_widget = QtWidgets.QWidget()
         volume_widget.setLayout(volume_layout)
         volume_widget.setFixedWidth(190)
-        volume_widget.installEventFilter(self)
-        volume_slider.setVisible(False)
-        self._volume_slider = volume_slider
-        self._volume_widget = volume_widget
 
         track_index = QtWidgets.QLabel("0 / 0")
         track_index.setObjectName("trackIndex")
@@ -718,11 +712,6 @@ class MainWindow(QtWidgets.QMainWindow):
     ) -> bool:
         if watched is self._track_title and event.type() == QtCore.QEvent.Resize:
             self._update_title_elide()
-        if watched is self._volume_widget:
-            if event.type() == QtCore.QEvent.Enter and self._volume_slider is not None:
-                self._volume_slider.setVisible(True)
-            if event.type() == QtCore.QEvent.Leave and self._volume_slider is not None:
-                self._volume_slider.setVisible(False)
         return super().eventFilter(watched, event)
 
     def _make_svg_icon(
