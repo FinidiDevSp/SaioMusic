@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from mutagen import File as MutagenFile
-from PySide6 import QtCore, QtGui, QtMultimedia, QtWidgets
+from PySide6 import QtCore, QtGui, QtMultimedia, QtSvg, QtWidgets
 
 if TYPE_CHECKING:
     import numpy as np
@@ -73,6 +73,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self._prev_button: QtWidgets.QToolButton | None = None
         self._next_button: QtWidgets.QToolButton | None = None
         self._track_index_label: QtWidgets.QLabel | None = None
+        self._play_icon: QtGui.QIcon | None = None
+        self._pause_icon: QtGui.QIcon | None = None
+        self._full_title: str = ""
 
         central = QtWidgets.QWidget()
         root = QtWidgets.QVBoxLayout(central)
@@ -212,19 +215,24 @@ class MainWindow(QtWidgets.QMainWindow):
 
         prev_btn = QtWidgets.QToolButton()
         prev_btn.setObjectName("transportButtonSmall")
-        prev_btn.setText("⏮")
+        prev_btn.setIcon(self._make_svg_icon("prev", 16))
+        prev_btn.setIconSize(QtCore.QSize(16, 16))
         prev_btn.setToolTip("Previous track")
         prev_btn.clicked.connect(lambda: self._play_adjacent(-1))
 
         play = QtWidgets.QToolButton()
         play.setObjectName("playButtonLarge")
-        play.setText("▶")
+        self._play_icon = self._make_svg_icon("play", 20, "#ffffff")
+        self._pause_icon = self._make_svg_icon("pause", 20, "#ffffff")
+        play.setIcon(self._play_icon)
+        play.setIconSize(QtCore.QSize(20, 20))
         play.setToolTip("Play/Pause")
         play.clicked.connect(self._toggle_playback)
 
         next_btn = QtWidgets.QToolButton()
         next_btn.setObjectName("transportButtonSmall")
-        next_btn.setText("⏭")
+        next_btn.setIcon(self._make_svg_icon("next", 16))
+        next_btn.setIconSize(QtCore.QSize(16, 16))
         next_btn.setToolTip("Next track")
         next_btn.clicked.connect(lambda: self._play_adjacent(1))
 
@@ -275,10 +283,18 @@ class MainWindow(QtWidgets.QMainWindow):
         now_label.setObjectName("nowPlayingLabel")
         title = QtWidgets.QLabel("No track selected")
         title.setObjectName("nowPlayingTitle")
+        title.setSizePolicy(
+            QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Preferred
+        )
+        title.installEventFilter(self)
+        self._full_title = "No track selected"
         now_playing.addWidget(now_label)
         now_playing.addWidget(title)
         now_playing_widget = QtWidgets.QWidget()
         now_playing_widget.setLayout(now_playing)
+        now_playing_widget.setSizePolicy(
+            QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Preferred
+        )
         self._track_title = title
 
         cover = QtWidgets.QLabel()
@@ -304,6 +320,7 @@ class MainWindow(QtWidgets.QMainWindow):
         info_wrap = QtWidgets.QWidget()
         info_wrap.setObjectName("infoBlock")
         info_wrap.setLayout(info_row)
+        info_wrap.setFixedWidth(230)
 
         volume_layout = QtWidgets.QHBoxLayout()
         volume_layout.setSpacing(6)
@@ -313,6 +330,7 @@ class MainWindow(QtWidgets.QMainWindow):
         volume_slider.setObjectName("volumeSlider")
         volume_slider.setRange(0, 100)
         volume_slider.setValue(70)
+        volume_slider.setFixedWidth(140)
         volume_slider.valueChanged.connect(
             lambda value: self._audio_output.setVolume(value / 100)
         )
@@ -320,6 +338,7 @@ class MainWindow(QtWidgets.QMainWindow):
         volume_layout.addWidget(volume_slider)
         volume_widget = QtWidgets.QWidget()
         volume_widget.setLayout(volume_layout)
+        volume_widget.setFixedWidth(190)
 
         track_index = QtWidgets.QLabel("0 / 0")
         track_index.setObjectName("trackIndex")
@@ -649,9 +668,11 @@ class MainWindow(QtWidgets.QMainWindow):
         if self._play_button is None:
             return
         if state == QtMultimedia.QMediaPlayer.PlayingState:
-            self._play_button.setText("⏸")
+            if self._pause_icon is not None:
+                self._play_button.setIcon(self._pause_icon)
         else:
-            self._play_button.setText("▶")
+            if self._play_icon is not None:
+                self._play_button.setIcon(self._play_icon)
 
     def _set_waveform_status(self, text: str) -> None:
         if self._waveform_status is None:
@@ -677,6 +698,47 @@ class MainWindow(QtWidgets.QMainWindow):
         animation.setEasingCurve(QtCore.QEasingCurve.OutCubic)
         animation.start(QtCore.QAbstractAnimation.DeleteWhenStopped)
 
+    def _update_title_elide(self) -> None:
+        if self._track_title is None:
+            return
+        metrics = QtGui.QFontMetrics(self._track_title.font())
+        elided = metrics.elidedText(
+            self._full_title, QtCore.Qt.ElideRight, self._track_title.width()
+        )
+        self._track_title.setText(elided)
+
+    def eventFilter(  # noqa: N802
+        self, watched: QtCore.QObject, event: QtCore.QEvent
+    ) -> bool:
+        if watched is self._track_title and event.type() == QtCore.QEvent.Resize:
+            self._update_title_elide()
+        return super().eventFilter(watched, event)
+
+    def _make_svg_icon(
+        self, name: str, size: int, color: str = "#0f172a"
+    ) -> QtGui.QIcon:
+        paths = {
+            "play": "<polygon points='6,4 18,12 6,20'/>",
+            "pause": "<rect x='6' y='4' width='4' height='16'/>"
+            "<rect x='14' y='4' width='4' height='16'/>",
+            "prev": "<rect x='5' y='5' width='2' height='14'/>"
+            "<polygon points='19,4 9,12 19,20'/>",
+            "next": "<polygon points='5,4 15,12 5,20'/>"
+            "<rect x='17' y='5' width='2' height='14'/>",
+        }
+        path = paths.get(name, paths["play"])
+        svg = (
+            "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'>"
+            f"<g fill='{color}'>{path}</g></svg>"
+        )
+        renderer = QtSvg.QSvgRenderer(QtCore.QByteArray(svg.encode("utf-8")))
+        pixmap = QtGui.QPixmap(size, size)
+        pixmap.fill(QtCore.Qt.transparent)
+        painter = QtGui.QPainter(pixmap)
+        renderer.render(painter)
+        painter.end()
+        return QtGui.QIcon(pixmap)
+
     def _play_track(self, path: Path, tags: dict[str, str | bytes | None]) -> None:
         self._player.setSource(QtCore.QUrl.fromLocalFile(str(path)))
         self._player.play()
@@ -692,7 +754,8 @@ class MainWindow(QtWidgets.QMainWindow):
         title = self._coerce_text(tags.get("title")) or ""
         artist = self._coerce_text(tags.get("artist")) or path.stem
         if self._track_title is not None:
-            self._track_title.setText(f"{artist} - {title}".strip(" -"))
+            self._full_title = f"{artist} - {title}".strip(" -")
+            self._update_title_elide()
             self._animate_now_playing(self._track_title)
         if self._now_playing_cover is not None:
             cover_data = tags.get("cover_data")
@@ -1284,7 +1347,8 @@ class MainWindow(QtWidgets.QMainWindow):
             border: 1px solid #e2e8f0;
         }
         #transportCluster {
-            background: #1f2933;
+            background: #ffffff;
+            border: 1px solid #e2e8f0;
             border-radius: 12px;
             padding: 6px;
         }
@@ -1298,8 +1362,8 @@ class MainWindow(QtWidgets.QMainWindow):
             font-size: 16px;
         }
         #transportButtonSmall {
-            background: #111827;
-            color: #e2e8f0;
+            background: #f1f5f9;
+            color: #0f172a;
             border-radius: 14px;
             min-width: 28px;
             min-height: 28px;
