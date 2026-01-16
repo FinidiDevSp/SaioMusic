@@ -69,6 +69,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._key_wheel: KeyWheelWidget | None = None
         self._play_button: QtWidgets.QToolButton | None = None
         self._now_playing_cover: QtWidgets.QLabel | None = None
+        self._current_row: int | None = None
 
         central = QtWidgets.QWidget()
         root = QtWidgets.QVBoxLayout(central)
@@ -224,6 +225,7 @@ class MainWindow(QtWidgets.QMainWindow):
         prev_btn.setObjectName("transportButton")
         prev_btn.setText("⏮")
         prev_btn.setToolTip("Previous track")
+        prev_btn.clicked.connect(lambda: self._play_adjacent(-1))
 
         play = QtWidgets.QToolButton()
         play.setObjectName("playButton")
@@ -235,6 +237,7 @@ class MainWindow(QtWidgets.QMainWindow):
         next_btn.setObjectName("transportButton")
         next_btn.setText("⏭")
         next_btn.setToolTip("Next track")
+        next_btn.clicked.connect(lambda: self._play_adjacent(1))
 
         now_playing = QtWidgets.QVBoxLayout()
         now_label = QtWidgets.QLabel("NOW PLAYING")
@@ -267,6 +270,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self._energy_chip = energy_chip
         self._bpm_chip = bpm_chip
 
+        info_wrap = QtWidgets.QWidget()
+        info_wrap.setObjectName("infoBlock")
+        info_wrap.setLayout(info_row)
+
         volume_layout = QtWidgets.QHBoxLayout()
         volume_layout.setSpacing(6)
         volume_icon = QtWidgets.QLabel("🔊")
@@ -288,7 +295,7 @@ class MainWindow(QtWidgets.QMainWindow):
         now_row.addWidget(next_btn)
         now_row.addWidget(cover)
         now_row.addWidget(now_playing_widget, 1)
-        now_row.addLayout(info_row)
+        now_row.addWidget(info_wrap)
         now_row.addWidget(volume_widget)
         layout.addLayout(now_row)
         self._play_button = play
@@ -427,6 +434,7 @@ class MainWindow(QtWidgets.QMainWindow):
         if self._tracks_table is None:
             return
         self._tracks_table.clearSelection()
+        self._current_row = row
         self._play_track_for_row(row)
 
     def _clear_track_selection(self, row: int, column: int) -> None:
@@ -512,7 +520,25 @@ class MainWindow(QtWidgets.QMainWindow):
             return
         path = Path(str(path_value))
         tags = self._read_tags(path)
+        self._current_row = row
         self._play_track(path, tags)
+
+    def _play_adjacent(self, step: int) -> None:
+        if self._tracks_table is None:
+            return
+        rows = [
+            row
+            for row in range(self._tracks_table.rowCount())
+            if not self._tracks_table.isRowHidden(row)
+        ]
+        if not rows:
+            return
+        if self._current_row not in rows:
+            target = rows[0]
+        else:
+            index = rows.index(self._current_row)
+            target = rows[(index + step) % len(rows)]
+        self._play_track_for_row(target)
 
     def _update_tracks_count(self) -> None:
         if self._tracks_table is None or self._tracks_count is None:
@@ -1192,6 +1218,11 @@ class MainWindow(QtWidgets.QMainWindow):
         #nowPlayingTitle {
             font-size: 16px;
             font-weight: 600;
+        }
+        #infoBlock {
+            background: #f1f5f9;
+            border-radius: 10px;
+            padding: 6px 10px;
         }
         #volumeIcon {
             color: #0f7cc4;
