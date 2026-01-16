@@ -376,13 +376,14 @@ class MainWindow(QtWidgets.QMainWindow):
         search_row.addWidget(tracks_label)
         layout.addLayout(search_row)
 
-        table = QtWidgets.QTableWidget(0, 7)
+        table = QtWidgets.QTableWidget(0, 8)
         table.setHorizontalHeaderLabels(
             [
                 "COVER ART",
                 "ARTIST",
                 "TITLE",
                 "LABEL",
+                "GENRE",
                 "TEMPO",
                 "KEY RESULT",
                 "ENERGY",
@@ -391,7 +392,7 @@ class MainWindow(QtWidgets.QMainWindow):
         table.verticalHeader().setVisible(False)
         table.setEditTriggers(QtWidgets.QAbstractItemView.NoEditTriggers)
         table.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectRows)
-        table.setSelectionMode(QtWidgets.QAbstractItemView.NoSelection)
+        table.setSelectionMode(QtWidgets.QAbstractItemView.SingleSelection)
         table.setAlternatingRowColors(True)
         table.setShowGrid(True)
         table.setSortingEnabled(True)
@@ -400,7 +401,7 @@ class MainWindow(QtWidgets.QMainWindow):
         table.setItemDelegate(ActiveRowDelegate(table))
         table.setIconSize(QtCore.QSize(30, 30))
         table.setColumnWidth(0, 44)
-        table.cellClicked.connect(self._clear_track_selection)
+        table.cellClicked.connect(self._select_row_on_click)
         table.cellDoubleClicked.connect(self._select_track_row)
 
         table.horizontalHeader().setSectionResizeMode(
@@ -417,6 +418,9 @@ class MainWindow(QtWidgets.QMainWindow):
         )
         table.horizontalHeader().setSectionResizeMode(
             6, QtWidgets.QHeaderView.ResizeToContents
+        )
+        table.horizontalHeader().setSectionResizeMode(
+            7, QtWidgets.QHeaderView.ResizeToContents
         )
 
         layout.addWidget(table, 1)
@@ -489,21 +493,15 @@ class MainWindow(QtWidgets.QMainWindow):
     def _select_track_row(self, row: int, column: int) -> None:
         if self._tracks_table is None:
             return
-        for index in range(self._tracks_table.rowCount()):
-            item = self._tracks_table.item(index, 0)
-            if item is not None:
-                item.setData(QtCore.Qt.UserRole + 1, False)
-        active_item = self._tracks_table.item(row, 0)
-        if active_item is not None:
-            active_item.setData(QtCore.Qt.UserRole + 1, True)
-        self._tracks_table.viewport().update()
+        self._set_active_row(row)
         self._current_row = row
         self._play_track_for_row(row)
 
-    def _clear_track_selection(self, row: int, column: int) -> None:
+    def _select_row_on_click(self, row: int, column: int) -> None:
         if self._tracks_table is None:
             return
-        self._tracks_table.clearSelection()
+        self._tracks_table.selectRow(row)
+        self._current_row = row
 
     def _toggle_key_filter(self, key: str, enabled: bool) -> None:
         if self._tracks_table is None:
@@ -523,7 +521,7 @@ class MainWindow(QtWidgets.QMainWindow):
             return
 
         for row in range(self._tracks_table.rowCount()):
-            item = self._tracks_table.item(row, 5)
+            item = self._tracks_table.item(row, 6)
             if item is None:
                 self._tracks_table.setRowHidden(row, True)
                 continue
@@ -550,7 +548,7 @@ class MainWindow(QtWidgets.QMainWindow):
             return
         counts: dict[str, int] = {}
         for row in range(self._tracks_table.rowCount()):
-            item = self._tracks_table.item(row, 5)
+            item = self._tracks_table.item(row, 6)
             if item is None:
                 continue
             value = item.data(QtCore.Qt.UserRole)
@@ -584,8 +582,23 @@ class MainWindow(QtWidgets.QMainWindow):
         path = Path(str(path_value))
         tags = self._read_tags(path)
         self._current_row = row
+        self._set_active_row(row)
         self._play_track(path, tags)
         self._update_track_position()
+
+    def _set_active_row(self, row: int) -> None:
+        if self._tracks_table is None:
+            return
+        for index in range(self._tracks_table.rowCount()):
+            item = self._tracks_table.item(index, 0)
+            if item is not None:
+                item.setData(QtCore.Qt.UserRole + 1, False)
+                item.setText("")
+        active_item = self._tracks_table.item(row, 0)
+        if active_item is not None:
+            active_item.setData(QtCore.Qt.UserRole + 1, True)
+            active_item.setText("▶")
+        self._tracks_table.viewport().update()
 
     def _play_adjacent(self, step: int) -> None:
         if self._tracks_table is None:
@@ -1001,11 +1014,13 @@ class MainWindow(QtWidgets.QMainWindow):
         cover_item.setIcon(cover_icon)
         cover_item.setData(QtCore.Qt.UserRole, str(path))
         cover_item.setData(QtCore.Qt.UserRole + 1, False)
+        cover_item.setTextAlignment(QtCore.Qt.AlignCenter)
         self._tracks_table.setItem(row, 0, cover_item)
 
         artist = tags.get("artist") or path.stem
         title = tags.get("title") or ""
         label = tags.get("label") or ""
+        genre = tags.get("genre") or ""
         tempo = tags.get("bpm") or ""
         key_result = tags.get("comments") or ""
         energy = "0"
@@ -1013,7 +1028,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self._tracks_table.setItem(row, 1, QtWidgets.QTableWidgetItem(artist))
         self._tracks_table.setItem(row, 2, QtWidgets.QTableWidgetItem(title))
         self._tracks_table.setItem(row, 3, QtWidgets.QTableWidgetItem(label))
-        self._tracks_table.setItem(row, 4, QtWidgets.QTableWidgetItem(tempo))
+        self._tracks_table.setItem(row, 4, QtWidgets.QTableWidgetItem(genre))
+        self._tracks_table.setItem(row, 5, QtWidgets.QTableWidgetItem(tempo))
 
         key_item = QtWidgets.QTableWidgetItem(key_result)
         key_item.setTextAlignment(QtCore.Qt.AlignCenter)
@@ -1022,11 +1038,11 @@ class MainWindow(QtWidgets.QMainWindow):
         key_color = self._camelot_color(normalized_key)
         if key_color is not None:
             key_item.setBackground(key_color)
-        self._tracks_table.setItem(row, 5, key_item)
+        self._tracks_table.setItem(row, 6, key_item)
 
         energy_item = QtWidgets.QTableWidgetItem(energy)
         energy_item.setTextAlignment(QtCore.Qt.AlignCenter)
-        self._tracks_table.setItem(row, 6, energy_item)
+        self._tracks_table.setItem(row, 7, energy_item)
 
     def _read_tags(self, path: Path) -> dict[str, str | bytes | None]:
         cached = self._get_cached_tags(path)
@@ -1047,6 +1063,7 @@ class MainWindow(QtWidgets.QMainWindow):
             "artist": None,
             "title": None,
             "label": None,
+            "genre": None,
             "bpm": None,
             "comments": None,
             "cover_data": None,
@@ -1062,6 +1079,7 @@ class MainWindow(QtWidgets.QMainWindow):
             info["label"] = self._first_tag(
                 audio, ["label", "organization", "publisher"]
             )
+            info["genre"] = self._first_tag(audio, ["genre", "tcon"])
             info["bpm"] = self._first_tag(audio, ["bpm", "tbpm"])
             info["comments"] = self._first_tag(audio, ["comment", "comments"])
 
@@ -1101,6 +1119,7 @@ class MainWindow(QtWidgets.QMainWindow):
             "artist": self._coerce_text(entry.get("artist")),
             "title": self._coerce_text(entry.get("title")),
             "label": self._coerce_text(entry.get("label")),
+            "genre": self._coerce_text(entry.get("genre")),
             "bpm": self._coerce_text(entry.get("bpm")),
             "comments": self._coerce_text(entry.get("comments")),
             "cover_data": cover_bytes,
@@ -1128,6 +1147,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 "artist": info.get("artist"),
                 "title": info.get("title"),
                 "label": info.get("label"),
+                "genre": info.get("genre"),
                 "bpm": info.get("bpm"),
                 "comments": info.get("comments"),
                 "cover_data": cover_encoded,
@@ -1476,7 +1496,7 @@ class MainWindow(QtWidgets.QMainWindow):
             background: transparent;
         }
         #tracksTable::item:selected {
-            background: transparent;
+            background: #eef7ff;
             color: #0f172a;
         }
         #tracksTable QHeaderView::section {
