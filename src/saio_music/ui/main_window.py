@@ -200,20 +200,25 @@ class MainWindow(QtWidgets.QMainWindow):
         layout.setContentsMargins(16, 14, 16, 14)
         layout.setSpacing(10)
 
-        top_row = QtWidgets.QHBoxLayout()
-        controls = QtWidgets.QHBoxLayout()
-        controls.setSpacing(8)
+        waveform = WaveformWidget()
+        waveform.seekRequested.connect(self._seek_to_ratio)
+        layout.addWidget(waveform)
+        self._waveform_widget = waveform
 
-        now_playing = QtWidgets.QVBoxLayout()
-        now_label = QtWidgets.QLabel("NOW PLAYING")
-        now_label.setObjectName("nowPlayingLabel")
-        cover = QtWidgets.QLabel()
-        cover.setFixedSize(44, 44)
-        cover.setStyleSheet("background: #e2e8f0; border-radius: 8px;")
-        now_playing.addWidget(now_label, alignment=QtCore.Qt.AlignHCenter)
-        now_playing.addWidget(cover, alignment=QtCore.Qt.AlignHCenter)
-        now_playing_widget = QtWidgets.QWidget()
-        now_playing_widget.setLayout(now_playing)
+        time_row = QtWidgets.QHBoxLayout()
+        waveform_status = QtWidgets.QLabel("")
+        waveform_status.setObjectName("waveformStatus")
+        waveform_status.setVisible(False)
+        time_row.addWidget(waveform_status)
+        time_row.addStretch(1)
+        time_label = QtWidgets.QLabel("00:00 / 00:00")
+        time_row.addWidget(time_label)
+        self._time_label = time_label
+        self._waveform_status = waveform_status
+        layout.addLayout(time_row)
+
+        now_row = QtWidgets.QHBoxLayout()
+        now_row.setSpacing(12)
 
         prev_btn = QtWidgets.QToolButton()
         prev_btn.setObjectName("transportButton")
@@ -231,6 +236,37 @@ class MainWindow(QtWidgets.QMainWindow):
         next_btn.setText("⏭")
         next_btn.setToolTip("Next track")
 
+        now_playing = QtWidgets.QVBoxLayout()
+        now_label = QtWidgets.QLabel("NOW PLAYING")
+        now_label.setObjectName("nowPlayingLabel")
+        title = QtWidgets.QLabel("No track selected")
+        title.setObjectName("nowPlayingTitle")
+        now_playing.addWidget(now_label)
+        now_playing.addWidget(title)
+        now_playing_widget = QtWidgets.QWidget()
+        now_playing_widget.setLayout(now_playing)
+        self._track_title = title
+
+        cover = QtWidgets.QLabel()
+        cover.setFixedSize(52, 52)
+        cover.setStyleSheet("background: #e2e8f0; border-radius: 10px;")
+        self._now_playing_cover = cover
+
+        info_row = QtWidgets.QHBoxLayout()
+        info_row.setSpacing(8)
+        info_row.addWidget(QtWidgets.QLabel("KEY"))
+        key_chip = _make_chip("--", "#8fe4ff", "#075985")
+        info_row.addWidget(key_chip)
+        info_row.addWidget(QtWidgets.QLabel("ENERGY"))
+        energy_chip = _make_chip("0", "#e2e8f0", "#0f172a")
+        info_row.addWidget(energy_chip)
+        info_row.addWidget(QtWidgets.QLabel("BPM"))
+        bpm_chip = _make_chip("--", "#e2e8f0", "#0f172a")
+        info_row.addWidget(bpm_chip)
+        self._key_chip = key_chip
+        self._energy_chip = energy_chip
+        self._bpm_chip = bpm_chip
+
         volume_layout = QtWidgets.QHBoxLayout()
         volume_layout.setSpacing(6)
         volume_icon = QtWidgets.QLabel("🔊")
@@ -247,64 +283,15 @@ class MainWindow(QtWidgets.QMainWindow):
         volume_widget = QtWidgets.QWidget()
         volume_widget.setLayout(volume_layout)
 
-        controls.addWidget(now_playing_widget)
-        controls.addWidget(prev_btn)
-        controls.addWidget(play)
-        controls.addWidget(next_btn)
-        controls.addWidget(volume_widget)
-        controls_widget = QtWidgets.QWidget()
-        controls_widget.setLayout(controls)
+        now_row.addWidget(prev_btn)
+        now_row.addWidget(play)
+        now_row.addWidget(next_btn)
+        now_row.addWidget(cover)
+        now_row.addWidget(now_playing_widget, 1)
+        now_row.addLayout(info_row)
+        now_row.addWidget(volume_widget)
+        layout.addLayout(now_row)
         self._play_button = play
-        self._now_playing_cover = cover
-
-        waveform_column = QtWidgets.QVBoxLayout()
-        waveform = WaveformWidget()
-        waveform.seekRequested.connect(self._seek_to_ratio)
-        waveform_column.addWidget(waveform)
-        waveform_widget = QtWidgets.QWidget()
-        waveform_widget.setLayout(waveform_column)
-        self._waveform_widget = waveform
-
-        top_row.addWidget(controls_widget)
-        top_row.addSpacing(10)
-        top_row.addWidget(waveform_widget, 1)
-
-        layout.addLayout(top_row)
-
-        time_row = QtWidgets.QHBoxLayout()
-        waveform_status = QtWidgets.QLabel("")
-        waveform_status.setObjectName("waveformStatus")
-        waveform_status.setVisible(False)
-        time_row.addWidget(waveform_status)
-        time_row.addStretch(1)
-        time_label = QtWidgets.QLabel("00:00 / 00:00")
-        time_row.addWidget(time_label)
-        self._time_label = time_label
-        self._waveform_status = waveform_status
-        layout.addLayout(time_row)
-
-        title = QtWidgets.QLabel("No track selected")
-        title.setStyleSheet("font-size: 18px; font-weight: 600;")
-        layout.addWidget(title)
-        self._track_title = title
-
-        info_row = QtWidgets.QHBoxLayout()
-        info_row.setSpacing(8)
-        info_row.addWidget(QtWidgets.QLabel("KEY"))
-        key_chip = _make_chip("--", "#8fe4ff", "#075985")
-        info_row.addWidget(key_chip)
-        info_row.addWidget(QtWidgets.QLabel("ENERGY"))
-        energy_chip = _make_chip("0", "#e2e8f0", "#0f172a")
-        info_row.addWidget(energy_chip)
-        info_row.addWidget(QtWidgets.QLabel("BPM"))
-        bpm_chip = _make_chip("--", "#e2e8f0", "#0f172a")
-        info_row.addWidget(bpm_chip)
-        info_row.addStretch(1)
-        info_row.addWidget(QtWidgets.QLabel("VIRTUAL PIANO"))
-        layout.addLayout(info_row)
-        self._key_chip = key_chip
-        self._energy_chip = energy_chip
-        self._bpm_chip = bpm_chip
 
         return panel
 
@@ -1201,6 +1188,10 @@ class MainWindow(QtWidgets.QMainWindow):
             color: #64748b;
             font-size: 9px;
             letter-spacing: 1px;
+        }
+        #nowPlayingTitle {
+            font-size: 16px;
+            font-weight: 600;
         }
         #volumeIcon {
             color: #0f7cc4;
