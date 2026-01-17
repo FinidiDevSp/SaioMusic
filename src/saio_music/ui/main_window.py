@@ -80,6 +80,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._volume_widget: QtWidgets.QWidget | None = None
         self._active_delegate: ActiveRowDelegate | None = None
         self._env_cache: dict[str, str] | None = None
+        self._resize_timer: QtCore.QTimer | None = None
         self._header: QtWidgets.QHeaderView | None = None
 
         central = QtWidgets.QWidget()
@@ -754,7 +755,12 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def resizeEvent(self, event: QtGui.QResizeEvent) -> None:  # noqa: N802
         super().resizeEvent(event)
-        self._auto_fit_columns()
+        if self._resize_timer is None:
+            timer = QtCore.QTimer(self)
+            timer.setSingleShot(True)
+            timer.timeout.connect(self._auto_fit_columns)
+            self._resize_timer = timer
+        self._resize_timer.start(200)
 
     def _tick_active_row(self) -> None:
         if self._tracks_table is None or self._active_delegate is None:
