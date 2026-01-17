@@ -531,6 +531,9 @@ class MainWindow(QtWidgets.QMainWindow):
     def _select_row_on_click(self, row: int, column: int) -> None:
         if self._tracks_table is None:
             return
+        modifiers = QtWidgets.QApplication.keyboardModifiers()
+        if modifiers & QtCore.Qt.ControlModifier:
+            return
         self._tracks_table.selectRow(row)
         self._current_row = row
 
