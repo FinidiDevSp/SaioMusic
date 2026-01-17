@@ -421,29 +421,23 @@ class MainWindow(QtWidgets.QMainWindow):
 
         header = table.horizontalHeader()
         header.setSectionsMovable(True)
+        header.setSectionResizeMode(QtWidgets.QHeaderView.Interactive)
+        header.setMouseTracking(True)
+        header.viewport().setMouseTracking(True)
         header.sectionMoved.connect(self._persist_table_header)
         header.sectionResized.connect(self._persist_table_header)
         header.installEventFilter(self)
+        header.viewport().installEventFilter(self)
         self._header = header
 
-        table.horizontalHeader().setSectionResizeMode(
-            0, QtWidgets.QHeaderView.ResizeToContents
-        )
-        table.horizontalHeader().setSectionResizeMode(1, QtWidgets.QHeaderView.Stretch)
-        table.horizontalHeader().setSectionResizeMode(2, QtWidgets.QHeaderView.Stretch)
-        table.horizontalHeader().setSectionResizeMode(3, QtWidgets.QHeaderView.Stretch)
-        table.horizontalHeader().setSectionResizeMode(
-            4, QtWidgets.QHeaderView.ResizeToContents
-        )
-        table.horizontalHeader().setSectionResizeMode(
-            5, QtWidgets.QHeaderView.ResizeToContents
-        )
-        table.horizontalHeader().setSectionResizeMode(
-            6, QtWidgets.QHeaderView.ResizeToContents
-        )
-        table.horizontalHeader().setSectionResizeMode(
-            7, QtWidgets.QHeaderView.ResizeToContents
-        )
+        table.setColumnWidth(0, 44)
+        table.setColumnWidth(1, 200)
+        table.setColumnWidth(2, 240)
+        table.setColumnWidth(3, 140)
+        table.setColumnWidth(4, 120)
+        table.setColumnWidth(5, 80)
+        table.setColumnWidth(6, 90)
+        table.setColumnWidth(7, 80)
 
         self._restore_table_header(table)
 
@@ -874,14 +868,17 @@ class MainWindow(QtWidgets.QMainWindow):
     ) -> bool:
         if watched is self._track_title and event.type() == QtCore.QEvent.Resize:
             self._update_title_elide()
-        if watched is self._header and event.type() == QtCore.QEvent.MouseMove:
-            header = self._header
-            if header is not None:
-                pos = header.mapFromGlobal(QtGui.QCursor.pos())
-                cursor = QtCore.Qt.ArrowCursor
-                if self._is_on_section_border(header, pos):
-                    cursor = QtCore.Qt.SplitHCursor
-                header.setCursor(cursor)
+        header = self._header
+        if (
+            header is not None
+            and watched in {header, header.viewport()}
+            and event.type() == QtCore.QEvent.MouseMove
+        ):
+            pos = header.viewport().mapFromGlobal(QtGui.QCursor.pos())
+            cursor = QtCore.Qt.ArrowCursor
+            if self._is_on_section_border(header, pos):
+                cursor = QtCore.Qt.SplitHCursor
+            header.viewport().setCursor(cursor)
         return super().eventFilter(watched, event)
 
     def _make_svg_icon(
