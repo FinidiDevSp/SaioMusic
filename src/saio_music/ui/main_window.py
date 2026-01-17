@@ -80,6 +80,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._volume_widget: QtWidgets.QWidget | None = None
         self._active_delegate: ActiveRowDelegate | None = None
         self._env_cache: dict[str, str] | None = None
+        self._header: QtWidgets.QHeaderView | None = None
 
         central = QtWidgets.QWidget()
         root = QtWidgets.QVBoxLayout(central)
@@ -422,6 +423,8 @@ class MainWindow(QtWidgets.QMainWindow):
         header.setSectionsMovable(True)
         header.sectionMoved.connect(self._persist_table_header)
         header.sectionResized.connect(self._persist_table_header)
+        header.installEventFilter(self)
+        self._header = header
 
         table.horizontalHeader().setSectionResizeMode(
             0, QtWidgets.QHeaderView.ResizeToContents
@@ -752,6 +755,10 @@ class MainWindow(QtWidgets.QMainWindow):
     ) -> None:
         if self._play_button is None:
             return
+        if self._active_delegate is not None:
+            self._active_delegate.set_playing(
+                state == QtMultimedia.QMediaPlayer.PlayingState
+            )
         if state == QtMultimedia.QMediaPlayer.PlayingState:
             if self._pause_icon is not None:
                 self._play_button.setIcon(self._pause_icon)
@@ -844,6 +851,15 @@ class MainWindow(QtWidgets.QMainWindow):
         if self._env_cache is not None:
             self._env_cache[key] = value
 
+    def _is_on_section_border(
+        self, header: QtWidgets.QHeaderView, pos: QtCore.QPoint
+    ) -> bool:
+        section = header.logicalIndexAt(pos)
+        if section < 0:
+            return False
+        rect = header.sectionRect(section)
+        return abs(pos.x() - rect.right()) <= 3
+
     def _update_title_elide(self) -> None:
         if self._track_title is None:
             return
@@ -858,6 +874,14 @@ class MainWindow(QtWidgets.QMainWindow):
     ) -> bool:
         if watched is self._track_title and event.type() == QtCore.QEvent.Resize:
             self._update_title_elide()
+        if watched is self._header and event.type() == QtCore.QEvent.MouseMove:
+            header = self._header
+            if header is not None:
+                pos = header.mapFromGlobal(QtGui.QCursor.pos())
+                cursor = QtCore.Qt.ArrowCursor
+                if self._is_on_section_border(header, pos):
+                    cursor = QtCore.Qt.SplitHCursor
+                header.setCursor(cursor)
         return super().eventFilter(watched, event)
 
     def _make_svg_icon(

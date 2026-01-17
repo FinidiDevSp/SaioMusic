@@ -11,9 +11,13 @@ class ActiveRowDelegate(QtWidgets.QStyledItemDelegate):
     def __init__(self, parent: QtWidgets.QWidget | None = None) -> None:
         super().__init__(parent)
         self._phase = 0.0
+        self._is_playing = False
 
     def set_phase(self, phase: float) -> None:
         self._phase = phase
+
+    def set_playing(self, playing: bool) -> None:
+        self._is_playing = playing
 
     def paint(
         self,
@@ -28,9 +32,12 @@ class ActiveRowDelegate(QtWidgets.QStyledItemDelegate):
             painter.setPen(QtCore.Qt.NoPen)
             painter.drawRect(option.rect)
             painter.restore()
-            if index.column() == 0:
-                self._draw_play_indicator(painter, option.rect)
+        if index.column() == 0:
+            option = QtWidgets.QStyleOptionViewItem(option)
+            option.decorationAlignment = QtCore.Qt.AlignCenter
         super().paint(painter, option, index)
+        if active and self._is_playing and index.column() == 0:
+            self._draw_play_indicator(painter, option.rect)
 
     def _draw_play_indicator(self, painter: QtGui.QPainter, rect: QtCore.QRect) -> None:
         center = rect.center()
