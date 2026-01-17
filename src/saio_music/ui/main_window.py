@@ -851,8 +851,10 @@ class MainWindow(QtWidgets.QMainWindow):
         section = header.logicalIndexAt(pos)
         if section < 0:
             return False
-        rect = header.sectionRect(section)
-        return abs(pos.x() - rect.right()) <= 3
+        start = header.sectionPosition(section)
+        size = header.sectionSize(section)
+        edge = start + size
+        return abs(pos.x() - edge) <= 3
 
     def _update_title_elide(self) -> None:
         if self._track_title is None:
