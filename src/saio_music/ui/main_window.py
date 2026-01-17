@@ -414,7 +414,7 @@ class MainWindow(QtWidgets.QMainWindow):
         table.setAlternatingRowColors(True)
         table.setShowGrid(True)
         table.setSortingEnabled(True)
-        table.setFocusPolicy(QtCore.Qt.NoFocus)
+        table.setFocusPolicy(QtCore.Qt.StrongFocus)
         table.setObjectName("tracksTable")
         delegate = ActiveRowDelegate(table)
         table.setItemDelegate(delegate)
@@ -422,6 +422,7 @@ class MainWindow(QtWidgets.QMainWindow):
         table.setCursor(QtCore.Qt.PointingHandCursor)
         table.viewport().setCursor(QtCore.Qt.PointingHandCursor)
         table.installEventFilter(self)
+        table.viewport().installEventFilter(self)
         table.setIconSize(QtCore.QSize(30, 30))
         table.setColumnWidth(0, 44)
         table.cellClicked.connect(self._select_row_on_click)
@@ -990,7 +991,12 @@ class MainWindow(QtWidgets.QMainWindow):
             if self._is_on_section_border(header, pos):
                 cursor = QtCore.Qt.SplitHCursor
             header.viewport().setCursor(cursor)
-        if watched is self._tracks_table and event.type() == QtCore.QEvent.KeyPress:
+        tracks_table = self._tracks_table
+        if (
+            tracks_table is not None
+            and watched in {tracks_table, tracks_table.viewport()}
+            and event.type() == QtCore.QEvent.KeyPress
+        ):
             key_event = QtGui.QKeyEvent(event)
             if key_event.key() == QtCore.Qt.Key_Delete:
                 self._delete_selected_rows()
