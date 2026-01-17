@@ -421,6 +421,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         header = table.horizontalHeader()
         header.setSectionsMovable(True)
+        header.setStretchLastSection(False)
         header.setSectionResizeMode(QtWidgets.QHeaderView.Interactive)
         header.setMouseTracking(True)
         header.viewport().setMouseTracking(True)
@@ -440,6 +441,7 @@ class MainWindow(QtWidgets.QMainWindow):
         table.setColumnWidth(7, 80)
 
         self._restore_table_header(table)
+        header.setSectionResizeMode(QtWidgets.QHeaderView.Interactive)
 
         layout.addWidget(table, 1)
         self._tracks_table = table
