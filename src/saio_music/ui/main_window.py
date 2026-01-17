@@ -410,7 +410,7 @@ class MainWindow(QtWidgets.QMainWindow):
         table.verticalHeader().setVisible(False)
         table.setEditTriggers(QtWidgets.QAbstractItemView.NoEditTriggers)
         table.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectRows)
-        table.setSelectionMode(QtWidgets.QAbstractItemView.SingleSelection)
+        table.setSelectionMode(QtWidgets.QAbstractItemView.ExtendedSelection)
         table.setAlternatingRowColors(True)
         table.setShowGrid(True)
         table.setSortingEnabled(True)
