@@ -427,6 +427,7 @@ class MainWindow(QtWidgets.QMainWindow):
         header.viewport().setMouseTracking(True)
         header.sectionMoved.connect(self._persist_table_header)
         header.sectionResized.connect(self._persist_table_header)
+        header.sectionDoubleClicked.connect(self._auto_resize_column)
         header.installEventFilter(self)
         header.viewport().installEventFilter(self)
         self._header = header
@@ -442,6 +443,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self._restore_table_header(table)
         header.setSectionResizeMode(QtWidgets.QHeaderView.Interactive)
+        self._auto_fit_columns()
 
         layout.addWidget(table, 1)
         self._tracks_table = table
@@ -509,6 +511,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self._save_cache()
             self._update_tracks_count()
             self._refresh_key_counts()
+            self._auto_fit_columns()
 
     def _select_track_row(self, row: int, column: int) -> None:
         if self._tracks_table is None:
@@ -647,6 +650,23 @@ class MainWindow(QtWidgets.QMainWindow):
             active_item.setData(QtCore.Qt.UserRole + 1, True)
             active_item.setText("")
         self._tracks_table.viewport().update()
+
+    def _auto_resize_column(self, index: int) -> None:
+        if self._tracks_table is None:
+            return
+        self._tracks_table.resizeColumnToContents(index)
+        self._persist_table_header()
+
+    def _auto_fit_columns(self) -> None:
+        if self._tracks_table is None:
+            return
+        viewport_width = max(1, self._tracks_table.viewport().width())
+        base = [44, 200, 240, 140, 120, 80, 90, 80]
+        total = sum(base)
+        scale = viewport_width / total if total else 1.0
+        widths = [max(44, int(value * scale)) for value in base]
+        for idx, width in enumerate(widths):
+            self._tracks_table.setColumnWidth(idx, width)
 
     def _play_adjacent(self, step: int) -> None:
         if self._tracks_table is None:
