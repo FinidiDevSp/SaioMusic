@@ -76,6 +76,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self._play_icon: QtGui.QIcon | None = None
         self._pause_icon: QtGui.QIcon | None = None
         self._full_title: str = ""
+        self._volume_slider: QtWidgets.QSlider | None = None
+        self._volume_widget: QtWidgets.QWidget | None = None
+        self._active_delegate: ActiveRowDelegate | None = None
+        self._env_cache: dict[str, str] | None = None
 
         central = QtWidgets.QWidget()
         root = QtWidgets.QVBoxLayout(central)
@@ -94,6 +98,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._player.positionChanged.connect(self._on_position_changed)
         self._player.durationChanged.connect(self._on_duration_changed)
         self._player.playbackStateChanged.connect(self._on_playback_state_changed)
+        self._start_active_row_timer()
 
     def _build_top_bar(self) -> QtWidgets.QWidget:
         bar = QtWidgets.QWidget()
@@ -217,6 +222,7 @@ class MainWindow(QtWidgets.QMainWindow):
         prev_btn.setObjectName("transportButtonSmall")
         prev_btn.setIcon(self._make_svg_icon("prev", 16))
         prev_btn.setIconSize(QtCore.QSize(16, 16))
+        prev_btn.setCursor(QtCore.Qt.PointingHandCursor)
         prev_btn.setToolTip("Previous track")
         prev_btn.clicked.connect(lambda: self._play_adjacent(-1))
 
@@ -226,6 +232,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._pause_icon = self._make_svg_icon("pause", 20, "#ffffff")
         play.setIcon(self._play_icon)
         play.setIconSize(QtCore.QSize(20, 20))
+        play.setCursor(QtCore.Qt.PointingHandCursor)
         play.setToolTip("Play/Pause")
         play.clicked.connect(self._toggle_playback)
 
@@ -233,6 +240,7 @@ class MainWindow(QtWidgets.QMainWindow):
         next_btn.setObjectName("transportButtonSmall")
         next_btn.setIcon(self._make_svg_icon("next", 16))
         next_btn.setIconSize(QtCore.QSize(16, 16))
+        next_btn.setCursor(QtCore.Qt.PointingHandCursor)
         next_btn.setToolTip("Next track")
         next_btn.clicked.connect(lambda: self._play_adjacent(1))
 
@@ -353,6 +361,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self._play_button = play
         self._prev_button = prev_btn
         self._next_button = next_btn
+        self._volume_slider = volume_slider
+        self._volume_widget = volume_widget
 
         return panel
 
@@ -398,11 +408,20 @@ class MainWindow(QtWidgets.QMainWindow):
         table.setSortingEnabled(True)
         table.setFocusPolicy(QtCore.Qt.NoFocus)
         table.setObjectName("tracksTable")
-        table.setItemDelegate(ActiveRowDelegate(table))
+        delegate = ActiveRowDelegate(table)
+        table.setItemDelegate(delegate)
+        self._active_delegate = delegate
+        table.setCursor(QtCore.Qt.PointingHandCursor)
+        table.viewport().setCursor(QtCore.Qt.PointingHandCursor)
         table.setIconSize(QtCore.QSize(30, 30))
         table.setColumnWidth(0, 44)
         table.cellClicked.connect(self._select_row_on_click)
         table.cellDoubleClicked.connect(self._select_track_row)
+
+        header = table.horizontalHeader()
+        header.setSectionsMovable(True)
+        header.sectionMoved.connect(self._persist_table_header)
+        header.sectionResized.connect(self._persist_table_header)
 
         table.horizontalHeader().setSectionResizeMode(
             0, QtWidgets.QHeaderView.ResizeToContents
@@ -422,6 +441,8 @@ class MainWindow(QtWidgets.QMainWindow):
         table.horizontalHeader().setSectionResizeMode(
             7, QtWidgets.QHeaderView.ResizeToContents
         )
+
+        self._restore_table_header(table)
 
         layout.addWidget(table, 1)
         self._tracks_table = table
@@ -625,7 +646,7 @@ class MainWindow(QtWidgets.QMainWindow):
         active_item = self._tracks_table.item(row, 0)
         if active_item is not None:
             active_item.setData(QtCore.Qt.UserRole + 1, True)
-            active_item.setText("▶")
+            active_item.setText("")
         self._tracks_table.viewport().update()
 
     def _play_adjacent(self, step: int) -> None:
@@ -705,6 +726,20 @@ class MainWindow(QtWidgets.QMainWindow):
         minutes, seconds = divmod(total_seconds, 60)
         return f"{minutes:02d}:{seconds:02d}"
 
+    def _start_active_row_timer(self) -> None:
+        timer = QtCore.QTimer(self)
+        timer.setInterval(240)
+        timer.timeout.connect(self._tick_active_row)
+        timer.start()
+        self._active_row_timer = timer
+
+    def _tick_active_row(self) -> None:
+        if self._tracks_table is None or self._active_delegate is None:
+            return
+        phase = (getattr(self._active_delegate, "_phase", 0.0) + 1) % 3
+        self._active_delegate.set_phase(phase)
+        self._tracks_table.viewport().update()
+
     def _update_navigation_state(self, visible: int) -> None:
         if self._prev_button is None or self._next_button is None:
             return
@@ -747,6 +782,67 @@ class MainWindow(QtWidgets.QMainWindow):
         animation.setEndValue(1.0)
         animation.setEasingCurve(QtCore.QEasingCurve.OutCubic)
         animation.start(QtCore.QAbstractAnimation.DeleteWhenStopped)
+
+    def _persist_table_header(self) -> None:
+        if self._tracks_table is None:
+            return
+        header = self._tracks_table.horizontalHeader()
+        encoded = base64.b64encode(header.saveState()).decode("ascii")
+        self._save_env_value("TABLE_HEADER_STATE", encoded)
+
+    def _restore_table_header(self, table: QtWidgets.QTableWidget) -> None:
+        encoded = self._load_env_value("TABLE_HEADER_STATE")
+        if not encoded:
+            return
+        try:
+            data = base64.b64decode(encoded)
+        except Exception:
+            return
+        table.horizontalHeader().restoreState(data)
+
+    def _load_env_value(self, key: str) -> str | None:
+        if self._env_cache is None:
+            self._env_cache = {}
+            env_path = Path.cwd() / ".env"
+            if env_path.exists():
+                try:
+                    content = env_path.read_text(encoding="utf-8")
+                except OSError:
+                    content = ""
+                for line in content.splitlines():
+                    if not line or line.startswith("#") or "=" not in line:
+                        continue
+                    name, value = line.split("=", 1)
+                    self._env_cache[name.strip()] = value.strip()
+        return self._env_cache.get(key)
+
+    def _save_env_value(self, key: str, value: str) -> None:
+        env_path = Path.cwd() / ".env"
+        existing: list[str] = []
+        if env_path.exists():
+            try:
+                existing = env_path.read_text(encoding="utf-8").splitlines()
+            except OSError:
+                existing = []
+
+        updated = False
+        output: list[str] = []
+        for line in existing:
+            if line.strip().startswith(f"{key}="):
+                output.append(f"{key}={value}")
+                updated = True
+            else:
+                output.append(line)
+
+        if not updated:
+            output.append(f"{key}={value}")
+
+        try:
+            env_path.write_text("\n".join(output) + "\n", encoding="utf-8")
+        except OSError:
+            return
+        if self._env_cache is not None:
+            self._env_cache[key] = value
 
     def _update_title_elide(self) -> None:
         if self._track_title is None:
