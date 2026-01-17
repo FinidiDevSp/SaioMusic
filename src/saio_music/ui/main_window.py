@@ -906,7 +906,22 @@ class MainWindow(QtWidgets.QMainWindow):
         if not destination:
             return
         target = Path(destination)
-        for row in range(self._tracks_table.rowCount()):
+        rows = [
+            row
+            for row in range(self._tracks_table.rowCount())
+            if not self._tracks_table.isRowHidden(row)
+        ]
+        progress = QtWidgets.QProgressDialog(
+            "Copying tracks...", "Cancel", 0, len(rows), self
+        )
+        progress.setWindowTitle("Create Playlist")
+        progress.setWindowModality(QtCore.Qt.WindowModal)
+        progress.setAutoClose(True)
+        progress.show()
+
+        for index, row in enumerate(rows, start=1):
+            if progress.wasCanceled():
+                break
             item = self._tracks_table.item(row, 0)
             if item is None:
                 continue
@@ -917,6 +932,9 @@ class MainWindow(QtWidgets.QMainWindow):
             if not source_path.exists():
                 continue
             self._copy_track(source_path, target)
+            progress.setValue(index)
+            if index % 10 == 0:
+                QtWidgets.QApplication.processEvents()
 
     def _copy_track(self, source: Path, target_dir: Path) -> None:
         target_dir.mkdir(parents=True, exist_ok=True)
