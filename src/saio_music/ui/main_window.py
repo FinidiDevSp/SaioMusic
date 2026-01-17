@@ -752,6 +752,10 @@ class MainWindow(QtWidgets.QMainWindow):
         timer.start()
         self._active_row_timer = timer
 
+    def resizeEvent(self, event: QtGui.QResizeEvent) -> None:  # noqa: N802
+        super().resizeEvent(event)
+        self._auto_fit_columns()
+
     def _tick_active_row(self) -> None:
         if self._tracks_table is None or self._active_delegate is None:
             return
