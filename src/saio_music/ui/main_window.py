@@ -88,6 +88,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._env_cache: dict[str, str] | None = None
         self._resize_timer: QtCore.QTimer | None = None
         self._pos_delegate: PosSpinBoxDelegate | None = None
+        self._pos_index: int | None = None
         self._header: QtWidgets.QHeaderView | None = None
 
         central = QtWidgets.QWidget()
@@ -1034,8 +1035,15 @@ class MainWindow(QtWidgets.QMainWindow):
         delegate = PosSpinBoxDelegate(self._tracks_table)
         delegate.set_maximum(self._tracks_table.rowCount())
         self._tracks_table.setItemDelegateForColumn(pos_index, delegate)
-        self._tracks_table.setEditTriggers(QtWidgets.QAbstractItemView.CurrentChanged)
+        delegate.posEdited.connect(self._handle_pos_edited)
         self._pos_delegate = delegate
+        self._pos_index = pos_index
+
+    def _handle_pos_edited(self, column: int) -> None:
+        if self._tracks_table is None:
+            return
+        self._tracks_table.sortItems(column, QtCore.Qt.AscendingOrder)
+        self._update_track_position()
 
     def _pos_column_complete(self, index: int) -> bool:
         if self._tracks_table is None:

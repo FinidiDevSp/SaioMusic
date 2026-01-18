@@ -8,9 +8,12 @@ from PySide6 import QtCore, QtGui, QtWidgets
 
 
 class PosSpinBoxDelegate(QtWidgets.QStyledItemDelegate):
+    posEdited = QtCore.Signal(int)
+
     def __init__(self, parent: QtWidgets.QWidget | None = None) -> None:
         super().__init__(parent)
         self._maximum = 0
+        self._current_pos = 1
 
     def set_maximum(self, maximum: int) -> None:
         self._maximum = maximum
@@ -33,9 +36,10 @@ class PosSpinBoxDelegate(QtWidgets.QStyledItemDelegate):
         if isinstance(editor, QtWidgets.QSpinBox):
             value = index.data(QtCore.Qt.DisplayRole)
             try:
-                editor.setValue(int(value))
+                self._current_pos = int(value)
             except (TypeError, ValueError):
-                editor.setValue(1)
+                self._current_pos = 1
+            editor.setValue(self._current_pos)
 
     def setModelData(
         self,
@@ -44,7 +48,26 @@ class PosSpinBoxDelegate(QtWidgets.QStyledItemDelegate):
         index: QtCore.QModelIndex,
     ) -> None:
         if isinstance(editor, QtWidgets.QSpinBox):
-            model.setData(index, str(editor.value()), QtCore.Qt.DisplayRole)
+            value = editor.value()
+            if self._is_duplicate(model, index, value):
+                editor.setValue(self._current_pos)
+                return
+            model.setData(index, str(value), QtCore.Qt.DisplayRole)
+            self.posEdited.emit(index.column())
+
+    def _is_duplicate(
+        self, model: QtCore.QAbstractItemModel, index: QtCore.QModelIndex, value: int
+    ) -> bool:
+        for row in range(model.rowCount()):
+            if row == index.row():
+                continue
+            other = model.index(row, index.column()).data(QtCore.Qt.DisplayRole)
+            try:
+                if int(other) == value:
+                    return True
+            except (TypeError, ValueError):
+                continue
+        return False
 
 
 class ActiveRowDelegate(QtWidgets.QStyledItemDelegate):
