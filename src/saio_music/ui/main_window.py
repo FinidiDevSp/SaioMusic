@@ -183,6 +183,11 @@ class MainWindow(QtWidgets.QMainWindow):
         create_playlist.clicked.connect(self._export_playlist)
         layout.addWidget(create_playlist)
 
+        clear_playlist = QtWidgets.QPushButton("CLEAR PLAYLIST")
+        clear_playlist.setObjectName("ghostButton")
+        clear_playlist.clicked.connect(self._clear_playlist)
+        layout.addWidget(clear_playlist)
+
         section = QtWidgets.QVBoxLayout()
         section.setSpacing(10)
 
@@ -984,6 +989,18 @@ class MainWindow(QtWidgets.QMainWindow):
             shutil.copy2(source, target_path)
         except OSError:
             return
+
+    def _clear_playlist(self) -> None:
+        if self._tracks_table is None:
+            return
+        pos_index = self._find_pos_column()
+        if pos_index is None:
+            return
+        self._tracks_table.removeColumn(pos_index)
+        self._pos_delegate = None
+        self._pos_index = None
+        self._persist_table_header()
+        self._auto_fit_columns()
 
     def _rows_sorted_by_pos(self, rows: list[int], pos_index: int) -> list[int]:
         if self._tracks_table is None:
