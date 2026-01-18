@@ -7,6 +7,46 @@ import math
 from PySide6 import QtCore, QtGui, QtWidgets
 
 
+class PosSpinBoxDelegate(QtWidgets.QStyledItemDelegate):
+    def __init__(self, parent: QtWidgets.QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._maximum = 0
+
+    def set_maximum(self, maximum: int) -> None:
+        self._maximum = maximum
+
+    def createEditor(
+        self,
+        parent: QtWidgets.QWidget,
+        option: QtWidgets.QStyleOptionViewItem,
+        index: QtCore.QModelIndex,
+    ) -> QtWidgets.QWidget:
+        editor = QtWidgets.QSpinBox(parent)
+        editor.setFrame(False)
+        editor.setMinimum(1)
+        editor.setMaximum(max(1, self._maximum))
+        return editor
+
+    def setEditorData(
+        self, editor: QtWidgets.QWidget, index: QtCore.QModelIndex
+    ) -> None:
+        if isinstance(editor, QtWidgets.QSpinBox):
+            value = index.data(QtCore.Qt.DisplayRole)
+            try:
+                editor.setValue(int(value))
+            except (TypeError, ValueError):
+                editor.setValue(1)
+
+    def setModelData(
+        self,
+        editor: QtWidgets.QWidget,
+        model: QtCore.QAbstractItemModel,
+        index: QtCore.QModelIndex,
+    ) -> None:
+        if isinstance(editor, QtWidgets.QSpinBox):
+            model.setData(index, str(editor.value()), QtCore.Qt.DisplayRole)
+
+
 class ActiveRowDelegate(QtWidgets.QStyledItemDelegate):
     def __init__(self, parent: QtWidgets.QWidget | None = None) -> None:
         super().__init__(parent)

@@ -15,7 +15,12 @@ from PySide6 import QtCore, QtGui, QtMultimedia, QtSvg, QtWidgets
 if TYPE_CHECKING:
     import numpy as np
 
-from saio_music.ui.widgets import ActiveRowDelegate, KeyWheelWidget, WaveformWidget
+from saio_music.ui.widgets import (
+    ActiveRowDelegate,
+    KeyWheelWidget,
+    PosSpinBoxDelegate,
+    WaveformWidget,
+)
 
 
 def _make_chip(text: str, bg: str, fg: str = "#0f172a") -> QtWidgets.QLabel:
@@ -82,6 +87,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._active_delegate: ActiveRowDelegate | None = None
         self._env_cache: dict[str, str] | None = None
         self._resize_timer: QtCore.QTimer | None = None
+        self._pos_delegate: PosSpinBoxDelegate | None = None
         self._header: QtWidgets.QHeaderView | None = None
 
         central = QtWidgets.QWidget()
@@ -531,6 +537,10 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _select_row_on_click(self, row: int, column: int) -> None:
         if self._tracks_table is None:
+            return
+        pos_index = self._find_pos_column()
+        if pos_index is not None and column == pos_index:
+            self._tracks_table.editItem(self._tracks_table.item(row, column))
             return
         modifiers = QtWidgets.QApplication.keyboardModifiers()
         if modifiers & QtCore.Qt.ControlModifier:
@@ -997,6 +1007,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 item.setTextAlignment(QtCore.Qt.AlignCenter)
                 self._tracks_table.setItem(row, pos_index, item)
             self._tracks_table.setColumnWidth(pos_index, 60)
+            self._enable_pos_delegate(pos_index)
             self._persist_table_header()
             self._auto_fit_columns()
             QtWidgets.QMessageBox.information(
@@ -1005,6 +1016,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 "POS column was added. Review positions before exporting.",
             )
             return None
+        self._enable_pos_delegate(pos_index)
         return pos_index
 
     def _find_pos_column(self) -> int | None:
@@ -1015,6 +1027,15 @@ class MainWindow(QtWidgets.QMainWindow):
             if header and header.text().strip().upper() == "POS":
                 return index
         return None
+
+    def _enable_pos_delegate(self, pos_index: int) -> None:
+        if self._tracks_table is None:
+            return
+        delegate = PosSpinBoxDelegate(self._tracks_table)
+        delegate.set_maximum(self._tracks_table.rowCount())
+        self._tracks_table.setItemDelegateForColumn(pos_index, delegate)
+        self._tracks_table.setEditTriggers(QtWidgets.QAbstractItemView.CurrentChanged)
+        self._pos_delegate = delegate
 
     def _pos_column_complete(self, index: int) -> bool:
         if self._tracks_table is None:
