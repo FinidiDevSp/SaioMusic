@@ -1087,12 +1087,31 @@ class MainWindow(QtWidgets.QMainWindow):
         self._pos_delegate = delegate
         self._pos_index = pos_index
 
-    def _handle_pos_edited(self, column: int) -> None:
+    def _handle_pos_edited(
+        self, row: int, column: int, old_value: int, new_value: int
+    ) -> None:
         if self._tracks_table is None:
             return
+        self._swap_duplicate_pos(row, column, old_value, new_value)
         self._tracks_table.sortItems(column, QtCore.Qt.AscendingOrder)
-        self._update_track_position()
         self._renumber_pos()
+        self._update_track_position()
+
+    def _swap_duplicate_pos(
+        self, row: int, column: int, old_value: int, new_value: int
+    ) -> None:
+        if self._tracks_table is None:
+            return
+        for idx in range(self._tracks_table.rowCount()):
+            if idx == row:
+                continue
+            item = self._tracks_table.item(idx, column)
+            if item is None:
+                continue
+            text = item.text().strip()
+            if text.isdigit() and int(text) == new_value:
+                item.setText(str(old_value))
+                return
 
     def _renumber_pos(self) -> None:
         if self._tracks_table is None:

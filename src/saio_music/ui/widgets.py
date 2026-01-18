@@ -8,7 +8,7 @@ from PySide6 import QtCore, QtGui, QtWidgets
 
 
 class PosSpinBoxDelegate(QtWidgets.QStyledItemDelegate):
-    posEdited = QtCore.Signal(int)
+    posEdited = QtCore.Signal(int, int, int, int)
 
     def __init__(self, parent: QtWidgets.QWidget | None = None) -> None:
         super().__init__(parent)
@@ -49,25 +49,8 @@ class PosSpinBoxDelegate(QtWidgets.QStyledItemDelegate):
     ) -> None:
         if isinstance(editor, QtWidgets.QSpinBox):
             value = editor.value()
-            if self._is_duplicate(model, index, value):
-                editor.setValue(self._current_pos)
-                return
             model.setData(index, str(value), QtCore.Qt.DisplayRole)
-            self.posEdited.emit(index.column())
-
-    def _is_duplicate(
-        self, model: QtCore.QAbstractItemModel, index: QtCore.QModelIndex, value: int
-    ) -> bool:
-        for row in range(model.rowCount()):
-            if row == index.row():
-                continue
-            other = model.index(row, index.column()).data(QtCore.Qt.DisplayRole)
-            try:
-                if int(other) == value:
-                    return True
-            except (TypeError, ValueError):
-                continue
-        return False
+            self.posEdited.emit(index.row(), index.column(), self._current_pos, value)
 
 
 class ActiveRowDelegate(QtWidgets.QStyledItemDelegate):
