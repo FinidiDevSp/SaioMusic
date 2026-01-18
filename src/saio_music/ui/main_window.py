@@ -998,6 +998,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 self._tracks_table.setItem(row, pos_index, item)
             self._tracks_table.setColumnWidth(pos_index, 60)
             self._persist_table_header()
+            self._auto_fit_columns()
             QtWidgets.QMessageBox.information(
                 self,
                 "POS column created",
