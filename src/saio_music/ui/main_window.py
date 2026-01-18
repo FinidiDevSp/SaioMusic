@@ -950,6 +950,7 @@ class MainWindow(QtWidgets.QMainWindow):
             for row in range(self._tracks_table.rowCount())
             if not self._tracks_table.isRowHidden(row)
         ]
+        rows = self._rows_sorted_by_pos(rows, pos_index)
         progress = QtWidgets.QProgressDialog(
             "Copying tracks...", "Cancel", 0, len(rows), self
         )
@@ -970,25 +971,46 @@ class MainWindow(QtWidgets.QMainWindow):
             source_path = Path(str(source))
             if not source_path.exists():
                 continue
-            self._copy_track(source_path, target)
+            pos_text = self._tracks_table.item(row, pos_index)
+            prefix = ""
+            if pos_text is not None and pos_text.text().strip().isdigit():
+                prefix = f"{int(pos_text.text().strip()):02d} - "
+            self._copy_track(source_path, target, prefix)
             progress.setValue(index)
             if index % 10 == 0:
                 QtWidgets.QApplication.processEvents()
 
-    def _copy_track(self, source: Path, target_dir: Path) -> None:
+    def _copy_track(self, source: Path, target_dir: Path, prefix: str) -> None:
         target_dir.mkdir(parents=True, exist_ok=True)
-        target_path = target_dir / source.name
+        target_name = f"{prefix}{source.name}"
+        target_path = target_dir / target_name
         if target_path.exists():
             stem = source.stem
             suffix = source.suffix
             counter = 1
             while target_path.exists():
-                target_path = target_dir / f"{stem} ({counter}){suffix}"
+                target_path = target_dir / f"{prefix}{stem} ({counter}){suffix}"
                 counter += 1
         try:
             shutil.copy2(source, target_path)
         except OSError:
             return
+        cover = self._read_cover_bytes(source)
+        if cover:
+            jpg_path = target_path.with_suffix(".jpg")
+            try:
+                image = QtGui.QImage.fromData(cover)
+                if not image.isNull():
+                    image.save(str(jpg_path), "JPG")
+            except Exception:
+                return
+
+    def _read_cover_bytes(self, path: Path) -> bytes | None:
+        try:
+            audio_full = MutagenFile(path)
+        except Exception:
+            return None
+        return self._extract_cover(audio_full)
 
     def _clear_playlist(self) -> None:
         if self._tracks_table is None:
