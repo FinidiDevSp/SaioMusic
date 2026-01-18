@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import json
 import re
+import shutil
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -170,6 +171,11 @@ class MainWindow(QtWidgets.QMainWindow):
         add_tracks.clicked.connect(self._select_tracks_folder)
         layout.addWidget(add_tracks)
 
+        create_playlist = QtWidgets.QPushButton("CREATE PLAYLIST")
+        create_playlist.setObjectName("ghostButton")
+        create_playlist.clicked.connect(self._export_playlist)
+        layout.addWidget(create_playlist)
+
         section = QtWidgets.QVBoxLayout()
         section.setSpacing(10)
 
@@ -186,7 +192,7 @@ class MainWindow(QtWidgets.QMainWindow):
             wrapper.setLayout(row)
             section.addWidget(wrapper)
 
-        add_entry("Analysis Queue", "Done")
+        add_entry("Analysis Queue")
         add_entry("My Collection")
         add_entry("Improve Tracks", "8")
         add_entry("Recently Added", "12")
@@ -404,17 +410,19 @@ class MainWindow(QtWidgets.QMainWindow):
         table.verticalHeader().setVisible(False)
         table.setEditTriggers(QtWidgets.QAbstractItemView.NoEditTriggers)
         table.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectRows)
-        table.setSelectionMode(QtWidgets.QAbstractItemView.SingleSelection)
+        table.setSelectionMode(QtWidgets.QAbstractItemView.ExtendedSelection)
         table.setAlternatingRowColors(True)
         table.setShowGrid(True)
         table.setSortingEnabled(True)
-        table.setFocusPolicy(QtCore.Qt.NoFocus)
+        table.setFocusPolicy(QtCore.Qt.StrongFocus)
         table.setObjectName("tracksTable")
         delegate = ActiveRowDelegate(table)
         table.setItemDelegate(delegate)
         self._active_delegate = delegate
         table.setCursor(QtCore.Qt.PointingHandCursor)
         table.viewport().setCursor(QtCore.Qt.PointingHandCursor)
+        table.installEventFilter(self)
+        table.viewport().installEventFilter(self)
         table.setIconSize(QtCore.QSize(30, 30))
         table.setColumnWidth(0, 44)
         table.cellClicked.connect(self._select_row_on_click)
@@ -523,6 +531,9 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _select_row_on_click(self, row: int, column: int) -> None:
         if self._tracks_table is None:
+            return
+        modifiers = QtWidgets.QApplication.keyboardModifiers()
+        if modifiers & QtCore.Qt.ControlModifier:
             return
         self._tracks_table.selectRow(row)
         self._current_row = row
@@ -877,6 +888,73 @@ class MainWindow(QtWidgets.QMainWindow):
         if self._env_cache is not None:
             self._env_cache[key] = value
 
+    def _delete_selected_rows(self) -> None:
+        if self._tracks_table is None:
+            return
+        selected = sorted(
+            {index.row() for index in self._tracks_table.selectedIndexes()},
+            reverse=True,
+        )
+        for row in selected:
+            self._tracks_table.removeRow(row)
+        if selected:
+            self._update_tracks_count()
+            self._refresh_key_counts()
+
+    def _export_playlist(self) -> None:
+        if self._tracks_table is None:
+            return
+        destination = QtWidgets.QFileDialog.getExistingDirectory(
+            self, "Select export folder"
+        )
+        if not destination:
+            return
+        target = Path(destination)
+        rows = [
+            row
+            for row in range(self._tracks_table.rowCount())
+            if not self._tracks_table.isRowHidden(row)
+        ]
+        progress = QtWidgets.QProgressDialog(
+            "Copying tracks...", "Cancel", 0, len(rows), self
+        )
+        progress.setWindowTitle("Create Playlist")
+        progress.setWindowModality(QtCore.Qt.WindowModal)
+        progress.setAutoClose(True)
+        progress.show()
+
+        for index, row in enumerate(rows, start=1):
+            if progress.wasCanceled():
+                break
+            item = self._tracks_table.item(row, 0)
+            if item is None:
+                continue
+            source = item.data(QtCore.Qt.UserRole)
+            if not source:
+                continue
+            source_path = Path(str(source))
+            if not source_path.exists():
+                continue
+            self._copy_track(source_path, target)
+            progress.setValue(index)
+            if index % 10 == 0:
+                QtWidgets.QApplication.processEvents()
+
+    def _copy_track(self, source: Path, target_dir: Path) -> None:
+        target_dir.mkdir(parents=True, exist_ok=True)
+        target_path = target_dir / source.name
+        if target_path.exists():
+            stem = source.stem
+            suffix = source.suffix
+            counter = 1
+            while target_path.exists():
+                target_path = target_dir / f"{stem} ({counter}){suffix}"
+                counter += 1
+        try:
+            shutil.copy2(source, target_path)
+        except OSError:
+            return
+
     def _is_on_section_border(
         self, header: QtWidgets.QHeaderView, pos: QtCore.QPoint
     ) -> bool:
@@ -913,6 +991,16 @@ class MainWindow(QtWidgets.QMainWindow):
             if self._is_on_section_border(header, pos):
                 cursor = QtCore.Qt.SplitHCursor
             header.viewport().setCursor(cursor)
+        tracks_table = self._tracks_table
+        if (
+            tracks_table is not None
+            and watched in {tracks_table, tracks_table.viewport()}
+            and event.type() == QtCore.QEvent.KeyPress
+        ):
+            key_event = QtGui.QKeyEvent(event)
+            if key_event.key() == QtCore.Qt.Key_Delete:
+                self._delete_selected_rows()
+                return True
         return super().eventFilter(watched, event)
 
     def _make_svg_icon(
