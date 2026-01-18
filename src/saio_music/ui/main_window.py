@@ -674,6 +674,8 @@ class MainWindow(QtWidgets.QMainWindow):
             return
         viewport_width = max(1, self._tracks_table.viewport().width())
         base = [44, 200, 240, 140, 120, 80, 90, 80]
+        if self._tracks_table.columnCount() > len(base):
+            base.extend([60] * (self._tracks_table.columnCount() - len(base)))
         total = sum(base)
         scale = viewport_width / total if total else 1.0
         widths = [max(44, int(value * scale)) for value in base]
@@ -904,6 +906,16 @@ class MainWindow(QtWidgets.QMainWindow):
     def _export_playlist(self) -> None:
         if self._tracks_table is None:
             return
+        pos_index = self._ensure_pos_column()
+        if pos_index is None:
+            return
+        if not self._pos_column_complete(pos_index):
+            QtWidgets.QMessageBox.information(
+                self,
+                "Missing positions",
+                "Please fill all POS values before exporting the playlist.",
+            )
+            return
         destination = QtWidgets.QFileDialog.getExistingDirectory(
             self, "Select export folder"
         )
@@ -954,6 +966,66 @@ class MainWindow(QtWidgets.QMainWindow):
             shutil.copy2(source, target_path)
         except OSError:
             return
+
+    def _rows_sorted_by_pos(self, rows: list[int], pos_index: int) -> list[int]:
+        if self._tracks_table is None:
+            return rows
+        positions: list[tuple[int, int]] = []
+        for row in rows:
+            item = self._tracks_table.item(row, pos_index)
+            if item is None:
+                continue
+            text = item.text().strip()
+            if not text.isdigit():
+                continue
+            positions.append((int(text), row))
+        positions.sort(key=lambda pair: pair[0])
+        return [row for _pos, row in positions]
+
+    def _ensure_pos_column(self) -> int | None:
+        if self._tracks_table is None:
+            return None
+        pos_index = self._find_pos_column()
+        if pos_index is None:
+            pos_index = self._tracks_table.columnCount()
+            self._tracks_table.insertColumn(pos_index)
+            self._tracks_table.setHorizontalHeaderItem(
+                pos_index, QtWidgets.QTableWidgetItem("POS")
+            )
+            for row in range(self._tracks_table.rowCount()):
+                item = QtWidgets.QTableWidgetItem(str(row + 1))
+                item.setTextAlignment(QtCore.Qt.AlignCenter)
+                self._tracks_table.setItem(row, pos_index, item)
+            self._tracks_table.setColumnWidth(pos_index, 60)
+            self._persist_table_header()
+            QtWidgets.QMessageBox.information(
+                self,
+                "POS column created",
+                "POS column was added. Review positions before exporting.",
+            )
+            return None
+        return pos_index
+
+    def _find_pos_column(self) -> int | None:
+        if self._tracks_table is None:
+            return None
+        for index in range(self._tracks_table.columnCount()):
+            header = self._tracks_table.horizontalHeaderItem(index)
+            if header and header.text().strip().upper() == "POS":
+                return index
+        return None
+
+    def _pos_column_complete(self, index: int) -> bool:
+        if self._tracks_table is None:
+            return False
+        for row in range(self._tracks_table.rowCount()):
+            item = self._tracks_table.item(row, index)
+            if item is None:
+                return False
+            text = item.text().strip()
+            if not text.isdigit():
+                return False
+        return True
 
     def _is_on_section_border(
         self, header: QtWidgets.QHeaderView, pos: QtCore.QPoint
