@@ -698,12 +698,6 @@ class MainWindow(QtWidgets.QMainWindow):
         for idx, width in enumerate(widths):
             self._tracks_table.setColumnWidth(idx, width)
 
-    def _sort_by_bpm(self) -> None:
-        if self._tracks_table is None:
-            return
-        bpm_col = 5
-        self._tracks_table.sortItems(bpm_col, QtCore.Qt.AscendingOrder)
-
     def _play_adjacent(self, step: int) -> None:
         if self._tracks_table is None:
             return
@@ -924,7 +918,6 @@ class MainWindow(QtWidgets.QMainWindow):
         if selected:
             self._update_tracks_count()
             self._refresh_key_counts()
-            self._renumber_pos()
 
     def _export_playlist(self) -> None:
         if self._tracks_table is None:
@@ -1057,8 +1050,6 @@ class MainWindow(QtWidgets.QMainWindow):
             self._enable_pos_delegate(pos_index)
             self._persist_table_header()
             self._auto_fit_columns()
-            self._sort_by_bpm()
-            self._renumber_pos()
             QtWidgets.QMessageBox.information(
                 self,
                 "POS column created",
@@ -1087,50 +1078,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self._pos_delegate = delegate
         self._pos_index = pos_index
 
-    def _handle_pos_edited(
-        self, row: int, column: int, old_value: int, new_value: int
-    ) -> None:
+    def _handle_pos_edited(self, row: int, column: int) -> None:
         if self._tracks_table is None:
             return
-        self._swap_duplicate_pos(row, column, old_value, new_value)
-        self._tracks_table.sortItems(column, QtCore.Qt.AscendingOrder)
-        self._renumber_pos()
         self._update_track_position()
-
-    def _swap_duplicate_pos(
-        self, row: int, column: int, old_value: int, new_value: int
-    ) -> None:
-        if self._tracks_table is None:
-            return
-        for idx in range(self._tracks_table.rowCount()):
-            if idx == row:
-                continue
-            item = self._tracks_table.item(idx, column)
-            if item is None:
-                continue
-            text = item.text().strip()
-            if text.isdigit() and int(text) == new_value:
-                item.setText(str(old_value))
-                return
-
-    def _renumber_pos(self) -> None:
-        if self._tracks_table is None:
-            return
-        pos_index = self._find_pos_column()
-        if pos_index is None:
-            return
-        rows = [
-            row
-            for row in range(self._tracks_table.rowCount())
-            if not self._tracks_table.isRowHidden(row)
-        ]
-        for idx, row in enumerate(rows, start=1):
-            item = self._tracks_table.item(row, pos_index)
-            if item is None:
-                item = QtWidgets.QTableWidgetItem()
-                item.setTextAlignment(QtCore.Qt.AlignCenter)
-                self._tracks_table.setItem(row, pos_index, item)
-            item.setText(str(idx))
 
     def _pos_column_complete(self, index: int) -> bool:
         if self._tracks_table is None:

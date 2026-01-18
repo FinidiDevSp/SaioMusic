@@ -8,12 +8,11 @@ from PySide6 import QtCore, QtGui, QtWidgets
 
 
 class PosSpinBoxDelegate(QtWidgets.QStyledItemDelegate):
-    posEdited = QtCore.Signal(int, int, int, int)
+    posEdited = QtCore.Signal(int, int)
 
     def __init__(self, parent: QtWidgets.QWidget | None = None) -> None:
         super().__init__(parent)
         self._maximum = 0
-        self._current_pos = 1
 
     def set_maximum(self, maximum: int) -> None:
         self._maximum = maximum
@@ -36,10 +35,9 @@ class PosSpinBoxDelegate(QtWidgets.QStyledItemDelegate):
         if isinstance(editor, QtWidgets.QSpinBox):
             value = index.data(QtCore.Qt.DisplayRole)
             try:
-                self._current_pos = int(value)
+                editor.setValue(int(value))
             except (TypeError, ValueError):
-                self._current_pos = 1
-            editor.setValue(self._current_pos)
+                editor.setValue(1)
 
     def setModelData(
         self,
@@ -50,7 +48,7 @@ class PosSpinBoxDelegate(QtWidgets.QStyledItemDelegate):
         if isinstance(editor, QtWidgets.QSpinBox):
             value = editor.value()
             model.setData(index, str(value), QtCore.Qt.DisplayRole)
-            self.posEdited.emit(index.row(), index.column(), self._current_pos, value)
+            self.posEdited.emit(index.row(), index.column())
 
 
 class ActiveRowDelegate(QtWidgets.QStyledItemDelegate):
