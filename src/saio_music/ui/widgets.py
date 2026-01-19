@@ -50,6 +50,25 @@ class PosSpinBoxDelegate(QtWidgets.QStyledItemDelegate):
             model.setData(index, str(value), QtCore.Qt.DisplayRole)
             self.posEdited.emit(index.row(), index.column())
 
+    def paint(
+        self,
+        painter: QtGui.QPainter,
+        option: QtWidgets.QStyleOptionViewItem,
+        index: QtCore.QModelIndex,
+    ) -> None:
+        text = str(index.data(QtCore.Qt.DisplayRole) or "").strip()
+        if text:
+            super().paint(painter, option, index)
+            return
+
+        option = QtWidgets.QStyleOptionViewItem(option)
+        option.text = ""
+        super().paint(painter, option, index)
+        painter.save()
+        painter.setPen(QtGui.QColor("#94a3b8"))
+        painter.drawText(option.rect, QtCore.Qt.AlignCenter, "set")
+        painter.restore()
+
 
 class ActiveRowDelegate(QtWidgets.QStyledItemDelegate):
     def __init__(self, parent: QtWidgets.QWidget | None = None) -> None:
