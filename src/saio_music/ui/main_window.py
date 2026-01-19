@@ -6,6 +6,7 @@ import base64
 import json
 import re
 import shutil
+import time
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -44,6 +45,140 @@ def _make_cover_pixmap(color: str) -> QtGui.QPixmap:
     return pixmap
 
 
+class MvsepWorker(QtCore.QObject):
+    status = QtCore.Signal(str)
+    finished = QtCore.Signal(bool, str)
+
+    def __init__(
+        self,
+        path: Path,
+        output_dir: Path,
+        token: str,
+        sep_type: str,
+        add_opt1: str,
+        add_opt2: str | None,
+        output_format: str,
+    ) -> None:
+        super().__init__()
+        self._path = path
+        self._output_dir = output_dir
+        self._token = token
+        self._sep_type = sep_type
+        self._add_opt1 = add_opt1
+        self._add_opt2 = add_opt2
+        self._output_format = output_format
+        self._cancelled = False
+
+    def cancel(self) -> None:
+        self._cancelled = True
+
+    def run(self) -> None:
+        try:
+            import requests
+        except ModuleNotFoundError:
+            self.finished.emit(False, "requests is not installed.")
+            return
+
+        try:
+            self._output_dir.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            self.finished.emit(False, f"Cannot create output folder: {exc}")
+            return
+
+        if self._cancelled:
+            self.finished.emit(False, "Canceled.")
+            return
+
+        self.status.emit("Uploading to MVSEP...")
+        try:
+            with self._path.open("rb") as audio_file:
+                files = {
+                    "audiofile": audio_file,
+                    "api_token": (None, self._token),
+                    "sep_type": (None, self._sep_type),
+                    "add_opt1": (None, self._add_opt1),
+                    "output_format": (None, self._output_format),
+                    "is_demo": (None, "0"),
+                }
+                if self._add_opt2:
+                    files["add_opt2"] = (None, self._add_opt2)
+                response = requests.post(
+                    "https://mvsep.com/api/separation/create",
+                    files=files,
+                    timeout=60,
+                )
+        except Exception as exc:
+            self.finished.emit(False, f"Upload failed: {exc}")
+            return
+
+        try:
+            data = response.json()
+        except Exception:
+            data = {}
+
+        try:
+            hash_value = data.get("data", {}).get("hash")
+        except AttributeError:
+            hash_value = None
+
+        if not response.ok or not hash_value:
+            self.finished.emit(False, "MVSEP create request failed.")
+            return
+
+        files_to_download = None
+        for attempt in range(1, 361):
+            if self._cancelled:
+                self.finished.emit(False, "Canceled.")
+                return
+            self.status.emit(f"Waiting for MVSEP... ({attempt}/360)")
+            try:
+                poll = requests.get(
+                    "https://mvsep.com/api/separation/get",
+                    params={"hash": hash_value},
+                    timeout=30,
+                )
+                poll_data = poll.json()
+            except Exception:
+                time.sleep(10)
+                continue
+
+            if poll_data.get("success"):
+                files_to_download = poll_data.get("data", {}).get("files")
+                if files_to_download:
+                    break
+            time.sleep(10)
+
+        if not files_to_download:
+            self.finished.emit(False, "MVSEP did not finish in time.")
+            return
+
+        for file_info in files_to_download:
+            if self._cancelled:
+                self.finished.emit(False, "Canceled.")
+                return
+            url = str(file_info.get("url", "")).replace("\\/", "/")
+            filename = str(file_info.get("download", ""))
+            if not url or not filename:
+                continue
+            self.status.emit(f"Downloading {filename}...")
+            try:
+                download = requests.get(url, stream=True, timeout=60)
+                download.raise_for_status()
+                output_path = self._output_dir / filename
+                with output_path.open("wb") as handle:
+                    for chunk in download.iter_content(chunk_size=1024 * 1024):
+                        if self._cancelled:
+                            self.finished.emit(False, "Canceled.")
+                            return
+                        if chunk:
+                            handle.write(chunk)
+            except Exception as exc:
+                self.finished.emit(False, f"Download failed: {exc}")
+                return
+
+        self.finished.emit(True, "MVSEP download complete.")
+
+
 class MainWindow(QtWidgets.QMainWindow):
     def __init__(self) -> None:
         super().__init__()
@@ -68,7 +203,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self._waveform_status: QtWidgets.QLabel | None = None
         self._key_chip: QtWidgets.QLabel | None = None
         self._bpm_chip: QtWidgets.QLabel | None = None
-        self._energy_chip: QtWidgets.QLabel | None = None
+        self._mvsep_chip: QtWidgets.QLabel | None = None
+        self._mvsep_thread: QtCore.QThread | None = None
+        self._mvsep_worker: MvsepWorker | None = None
+        self._mvsep_progress: QtWidgets.QProgressDialog | None = None
         self._duration_ms = 0
         self._active_key_filter: str | None = None
         self._active_key_filters: set[str] = set()
@@ -339,9 +477,12 @@ class MainWindow(QtWidgets.QMainWindow):
         key_chip.setCursor(QtCore.Qt.PointingHandCursor)
         key_chip.installEventFilter(self)
         info_row.addWidget(key_chip)
-        info_row.addWidget(QtWidgets.QLabel("ENERGY"))
-        energy_chip = _make_chip("0", "#e2e8f0", "#0f172a")
-        info_row.addWidget(energy_chip)
+        info_row.addWidget(QtWidgets.QLabel("MVSEP"))
+        mvsep_chip = _make_chip("NO", "#e2e8f0", "#0f172a")
+        mvsep_chip.setToolTip("Double-click to run MVSEP separation")
+        mvsep_chip.setCursor(QtCore.Qt.PointingHandCursor)
+        mvsep_chip.installEventFilter(self)
+        info_row.addWidget(mvsep_chip)
         info_row.addWidget(QtWidgets.QLabel("BPM"))
         bpm_chip = _make_chip("--", "#e2e8f0", "#0f172a")
         bpm_chip.setToolTip("Double-click to analyze BPM")
@@ -349,7 +490,7 @@ class MainWindow(QtWidgets.QMainWindow):
         bpm_chip.installEventFilter(self)
         info_row.addWidget(bpm_chip)
         self._key_chip = key_chip
-        self._energy_chip = energy_chip
+        self._mvsep_chip = mvsep_chip
         self._bpm_chip = bpm_chip
 
         info_wrap = QtWidgets.QWidget()
@@ -1130,16 +1271,16 @@ class MainWindow(QtWidgets.QMainWindow):
     ) -> bool:
         if watched is self._track_title and event.type() == QtCore.QEvent.Resize:
             self._update_title_elide()
-        if (
-            watched is not None
-            and watched in {self._key_chip, self._bpm_chip}
-            and event.type() == QtCore.QEvent.MouseButtonDblClick
-        ):
+        if watched is not None and event.type() == QtCore.QEvent.MouseButtonDblClick:
             if watched is self._key_chip:
                 self._analyze_current_key()
-            else:
+                return True
+            if watched is self._bpm_chip:
                 self._analyze_current_bpm()
-            return True
+                return True
+            if watched is self._mvsep_chip:
+                self._start_mvsep_separation()
+                return True
         header = self._header
         if (
             header is not None
@@ -1494,6 +1635,89 @@ class MainWindow(QtWidgets.QMainWindow):
             self._current_row, new_path, merged_key, merged_bpm
         )
 
+    def _start_mvsep_separation(self) -> None:
+        if self._mvsep_thread is not None and self._mvsep_thread.isRunning():
+            QtWidgets.QMessageBox.information(
+                self, "MVSEP", "A separation is already running."
+            )
+            return
+        path = self._current_path
+        if path is None:
+            QtWidgets.QMessageBox.information(self, "MVSEP", "No track selected.")
+            return
+        settings = self._get_mvsep_settings()
+        if settings is None:
+            QtWidgets.QMessageBox.warning(
+                self,
+                "MVSEP",
+                "Missing MVSEP settings in .env (token or sep type).",
+            )
+            return
+        output_dir = QtWidgets.QFileDialog.getExistingDirectory(
+            self, "Select MVSEP output folder"
+        )
+        if not output_dir:
+            return
+
+        self._release_media_handle(path)
+        if self._mvsep_chip is not None:
+            self._mvsep_chip.setText("...")
+
+        progress = QtWidgets.QProgressDialog(
+            "Uploading to MVSEP...", "Cancel", 0, 0, self
+        )
+        progress.setWindowTitle("MVSEP")
+        progress.setWindowModality(QtCore.Qt.WindowModal)
+        progress.setAutoClose(False)
+        progress.setMinimumDuration(0)
+        progress.show()
+        self._mvsep_progress = progress
+
+        worker = MvsepWorker(path, Path(output_dir), **settings)
+        thread = QtCore.QThread(self)
+        self._mvsep_worker = worker
+        self._mvsep_thread = thread
+        worker.moveToThread(thread)
+        thread.started.connect(worker.run)
+        worker.status.connect(self._update_mvsep_progress)
+        worker.finished.connect(self._finish_mvsep_separation)
+        worker.finished.connect(thread.quit)
+        worker.finished.connect(worker.deleteLater)
+        thread.finished.connect(thread.deleteLater)
+        progress.canceled.connect(worker.cancel)
+        thread.start()
+
+    def _update_mvsep_progress(self, message: str) -> None:
+        if self._mvsep_progress is not None:
+            self._mvsep_progress.setLabelText(message)
+
+    def _finish_mvsep_separation(self, success: bool, message: str) -> None:
+        if self._mvsep_progress is not None:
+            self._mvsep_progress.close()
+            self._mvsep_progress = None
+        if self._mvsep_chip is not None:
+            self._mvsep_chip.setText("SI" if success else "NO")
+        if not success and message and message != "Canceled.":
+            QtWidgets.QMessageBox.warning(self, "MVSEP", message)
+        self._mvsep_worker = None
+        self._mvsep_thread = None
+
+    def _get_mvsep_settings(self) -> dict[str, str] | None:
+        token = self._load_env_value("MVSEP_API_TOKEN")
+        sep_type = self._load_env_value("MVSEP_SEP_TYPE")
+        if not token or not sep_type:
+            return None
+        add_opt1 = self._load_env_value("MVSEP_ADD_OPT1") or ""
+        add_opt2 = self._load_env_value("MVSEP_ADD_OPT2") or ""
+        output_format = self._load_env_value("MVSEP_OUTPUT_FORMAT") or "0"
+        return {
+            "token": token,
+            "sep_type": sep_type,
+            "add_opt1": add_opt1,
+            "add_opt2": add_opt2,
+            "output_format": output_format,
+        }
+
     def _release_media_handle(self, path: Path) -> None:
         current = self._player.source()
         if current.isLocalFile():
@@ -1678,9 +1902,9 @@ class MainWindow(QtWidgets.QMainWindow):
         if self._bpm_chip is not None:
             self._bpm_chip.setText(self._coerce_text(tags.get("bpm")) or "--")
             self._animate_now_playing(self._bpm_chip)
-        if self._energy_chip is not None:
-            self._energy_chip.setText("0")
-            self._animate_now_playing(self._energy_chip)
+        if self._mvsep_chip is not None:
+            self._mvsep_chip.setText("NO")
+            self._animate_now_playing(self._mvsep_chip)
 
     def _load_waveform(self, path: Path) -> None:
         if self._waveform_widget is None:

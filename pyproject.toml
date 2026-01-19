@@ -24,7 +24,8 @@ dependencies = [
   "mutagen>=1.47",
   "numpy>=1.26",
   "soundfile>=0.12",
-  "pydub>=0.25"
+  "pydub>=0.25",
+  "requests>=2.32"
 ]
 
 [project.optional-dependencies]
@@ -71,6 +72,10 @@ ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
 module = ["pydub", "pydub.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["requests", "requests.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]
