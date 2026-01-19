@@ -1461,6 +1461,7 @@ class MainWindow(QtWidgets.QMainWindow):
     def _apply_computed_metadata(
         self, path: Path, key: str | None = None, bpm: int | None = None
     ) -> None:
+        self._release_media_handle(path)
         tags = self._read_tags(path)
         existing_key = self._coerce_text(tags.get("comments"))
         existing_bpm = self._coerce_text(tags.get("bpm"))
@@ -1492,6 +1493,14 @@ class MainWindow(QtWidgets.QMainWindow):
         self._update_track_row_metadata(
             self._current_row, new_path, merged_key, merged_bpm
         )
+
+    def _release_media_handle(self, path: Path) -> None:
+        current = self._player.source()
+        if current.isLocalFile():
+            current_path = Path(current.toLocalFile())
+            if current_path.resolve() == path.resolve():
+                self._player.stop()
+                self._player.setSource(QtCore.QUrl())
 
     def _extract_filename_metadata(
         self, stem: str
