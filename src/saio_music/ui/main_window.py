@@ -68,7 +68,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._waveform_status: QtWidgets.QLabel | None = None
         self._key_chip: QtWidgets.QLabel | None = None
         self._bpm_chip: QtWidgets.QLabel | None = None
-        self._energy_chip: QtWidgets.QLabel | None = None
+        self._mvsep_chip: QtWidgets.QLabel | None = None
         self._duration_ms = 0
         self._active_key_filter: str | None = None
         self._active_key_filters: set[str] = set()
@@ -339,9 +339,12 @@ class MainWindow(QtWidgets.QMainWindow):
         key_chip.setCursor(QtCore.Qt.PointingHandCursor)
         key_chip.installEventFilter(self)
         info_row.addWidget(key_chip)
-        info_row.addWidget(QtWidgets.QLabel("ENERGY"))
-        energy_chip = _make_chip("0", "#e2e8f0", "#0f172a")
-        info_row.addWidget(energy_chip)
+        info_row.addWidget(QtWidgets.QLabel("MVSEP"))
+        mvsep_chip = _make_chip("NO", "#e2e8f0", "#0f172a")
+        mvsep_chip.setToolTip("Click to open MVSEP")
+        mvsep_chip.setCursor(QtCore.Qt.PointingHandCursor)
+        mvsep_chip.installEventFilter(self)
+        info_row.addWidget(mvsep_chip)
         info_row.addWidget(QtWidgets.QLabel("BPM"))
         bpm_chip = _make_chip("--", "#e2e8f0", "#0f172a")
         bpm_chip.setToolTip("Double-click to analyze BPM")
@@ -349,7 +352,7 @@ class MainWindow(QtWidgets.QMainWindow):
         bpm_chip.installEventFilter(self)
         info_row.addWidget(bpm_chip)
         self._key_chip = key_chip
-        self._energy_chip = energy_chip
+        self._mvsep_chip = mvsep_chip
         self._bpm_chip = bpm_chip
 
         info_wrap = QtWidgets.QWidget()
@@ -1130,15 +1133,20 @@ class MainWindow(QtWidgets.QMainWindow):
     ) -> bool:
         if watched is self._track_title and event.type() == QtCore.QEvent.Resize:
             self._update_title_elide()
-        if (
-            watched is not None
-            and watched in {self._key_chip, self._bpm_chip}
-            and event.type() == QtCore.QEvent.MouseButtonDblClick
-        ):
+        if watched is not None and event.type() == QtCore.QEvent.MouseButtonDblClick:
             if watched is self._key_chip:
                 self._analyze_current_key()
-            else:
+                return True
+            if watched is self._bpm_chip:
                 self._analyze_current_bpm()
+                return True
+        if (
+            watched is self._mvsep_chip
+            and event.type() == QtCore.QEvent.MouseButtonPress
+        ):
+            QtWidgets.QMessageBox.information(
+                self, "MVSEP", "MVSEP integration coming soon."
+            )
             return True
         header = self._header
         if (
@@ -1678,9 +1686,9 @@ class MainWindow(QtWidgets.QMainWindow):
         if self._bpm_chip is not None:
             self._bpm_chip.setText(self._coerce_text(tags.get("bpm")) or "--")
             self._animate_now_playing(self._bpm_chip)
-        if self._energy_chip is not None:
-            self._energy_chip.setText("0")
-            self._animate_now_playing(self._energy_chip)
+        if self._mvsep_chip is not None:
+            self._mvsep_chip.setText("NO")
+            self._animate_now_playing(self._mvsep_chip)
 
     def _load_waveform(self, path: Path) -> None:
         if self._waveform_widget is None:
