@@ -990,7 +990,9 @@ class MainWindow(QtWidgets.QMainWindow):
             return
         cover = self._read_cover_bytes(source)
         if cover:
-            jpg_path = target_path.with_suffix(".jpg")
+            images_dir = target_dir / "IMAGES"
+            images_dir.mkdir(parents=True, exist_ok=True)
+            jpg_path = images_dir / f"{target_path.stem}.jpg"
             try:
                 image = QtGui.QImage.fromData(cover)
                 if not image.isNull():
