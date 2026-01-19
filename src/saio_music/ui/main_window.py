@@ -76,6 +76,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._play_button: QtWidgets.QToolButton | None = None
         self._now_playing_cover: QtWidgets.QLabel | None = None
         self._current_row: int | None = None
+        self._current_path: Path | None = None
         self._prev_button: QtWidgets.QToolButton | None = None
         self._next_button: QtWidgets.QToolButton | None = None
         self._track_index_label: QtWidgets.QLabel | None = None
@@ -334,12 +335,18 @@ class MainWindow(QtWidgets.QMainWindow):
         info_row.setSpacing(8)
         info_row.addWidget(QtWidgets.QLabel("KEY"))
         key_chip = _make_chip("--", "#8fe4ff", "#075985")
+        key_chip.setToolTip("Double-click to analyze key")
+        key_chip.setCursor(QtCore.Qt.PointingHandCursor)
+        key_chip.installEventFilter(self)
         info_row.addWidget(key_chip)
         info_row.addWidget(QtWidgets.QLabel("ENERGY"))
         energy_chip = _make_chip("0", "#e2e8f0", "#0f172a")
         info_row.addWidget(energy_chip)
         info_row.addWidget(QtWidgets.QLabel("BPM"))
         bpm_chip = _make_chip("--", "#e2e8f0", "#0f172a")
+        bpm_chip.setToolTip("Double-click to analyze BPM")
+        bpm_chip.setCursor(QtCore.Qt.PointingHandCursor)
+        bpm_chip.installEventFilter(self)
         info_row.addWidget(bpm_chip)
         self._key_chip = key_chip
         self._energy_chip = energy_chip
@@ -661,6 +668,7 @@ class MainWindow(QtWidgets.QMainWindow):
         path = Path(str(path_value))
         tags = self._read_tags(path)
         self._current_row = row
+        self._current_path = path
         self._set_active_row(row)
         self._play_track(path, tags)
         self._update_track_position()
@@ -1122,6 +1130,16 @@ class MainWindow(QtWidgets.QMainWindow):
     ) -> bool:
         if watched is self._track_title and event.type() == QtCore.QEvent.Resize:
             self._update_title_elide()
+        if (
+            watched is not None
+            and watched in {self._key_chip, self._bpm_chip}
+            and event.type() == QtCore.QEvent.MouseButtonDblClick
+        ):
+            if watched is self._key_chip:
+                self._analyze_current_key()
+            else:
+                self._analyze_current_bpm()
+            return True
         header = self._header
         if (
             header is not None
@@ -1173,11 +1191,443 @@ class MainWindow(QtWidgets.QMainWindow):
     def _play_track(self, path: Path, tags: dict[str, str | bytes | None]) -> None:
         self._player.setSource(QtCore.QUrl.fromLocalFile(str(path)))
         self._player.play()
+        self._current_path = path
         camelot_key = self._normalize_camelot_key(tags.get("comments"))
         if self._key_wheel is not None:
             self._key_wheel.set_active_key(camelot_key)
         self._update_now_playing(path, tags)
         self._load_waveform(path)
+
+    def _analyze_current_key(self) -> None:
+        path = self._current_path
+        if path is None:
+            QtWidgets.QMessageBox.information(self, "Analyze key", "No track selected.")
+            return
+        QtWidgets.QApplication.setOverrideCursor(QtCore.Qt.WaitCursor)
+        try:
+            key = self._estimate_key(path)
+        finally:
+            QtWidgets.QApplication.restoreOverrideCursor()
+        if key is None:
+            QtWidgets.QMessageBox.information(
+                self, "Analyze key", "Unable to analyze the key for this track."
+            )
+            return
+        self._apply_computed_metadata(path, key=key)
+
+    def _analyze_current_bpm(self) -> None:
+        path = self._current_path
+        if path is None:
+            QtWidgets.QMessageBox.information(self, "Analyze BPM", "No track selected.")
+            return
+        QtWidgets.QApplication.setOverrideCursor(QtCore.Qt.WaitCursor)
+        try:
+            bpm = self._estimate_bpm(path)
+        finally:
+            QtWidgets.QApplication.restoreOverrideCursor()
+        if bpm is None:
+            QtWidgets.QMessageBox.information(
+                self, "Analyze BPM", "Unable to analyze the BPM for this track."
+            )
+            return
+        self._apply_computed_metadata(path, bpm=bpm)
+
+    def _estimate_bpm(self, path: Path) -> int | None:
+        try:
+            import numpy as np
+        except ModuleNotFoundError:
+            return None
+
+        audio = self._read_audio_with_rate(path)
+        if audio is None:
+            return None
+        data, sr = audio
+        if sr <= 0:
+            return None
+
+        mono = data.mean(axis=1)
+        max_samples = int(sr * 90)
+        if mono.size > max_samples:
+            mono = mono[:max_samples]
+
+        frame_size = 1024
+        hop = 512
+        if mono.size < frame_size + hop:
+            return None
+
+        energy = []
+        for start in range(0, mono.size - frame_size, hop):
+            frame = mono[start : start + frame_size]
+            energy.append(float(np.sum(frame * frame)))
+        if len(energy) < 4:
+            return None
+        energy = np.asarray(energy)
+        onset = np.diff(energy)
+        onset = np.maximum(onset, 0.0)
+        if onset.size < 4:
+            return None
+        onset -= onset.mean()
+        if np.allclose(onset, 0):
+            return None
+
+        autocorr = np.correlate(onset, onset, mode="full")
+        autocorr = autocorr[autocorr.size // 2 :]
+        env_rate = sr / hop
+        min_bpm = 60
+        max_bpm = 200
+        lag_min = int(env_rate * 60 / max_bpm)
+        lag_max = int(env_rate * 60 / min_bpm)
+        if lag_max <= lag_min or lag_max >= autocorr.size:
+            return None
+        window = autocorr[lag_min:lag_max]
+        if window.size == 0:
+            return None
+        best_lag = lag_min + int(window.argmax())
+        bpm = int(round(60 * env_rate / best_lag))
+        if bpm <= 0:
+            return None
+        return bpm
+
+    def _estimate_key(self, path: Path) -> str | None:
+        try:
+            import numpy as np
+        except ModuleNotFoundError:
+            return None
+
+        audio = self._read_audio_with_rate(path)
+        if audio is None:
+            return None
+        data, sr = audio
+        if sr <= 0:
+            return None
+
+        mono = data.mean(axis=1)
+        max_samples = int(sr * 120)
+        if mono.size > max_samples:
+            mono = mono[:max_samples]
+
+        if sr > 22050:
+            factor = max(1, int(sr / 22050))
+            mono = mono[::factor]
+            sr = int(sr / factor)
+
+        frame_size = 4096
+        hop = 2048
+        if mono.size < frame_size + hop:
+            return None
+
+        freqs = np.fft.rfftfreq(frame_size, d=1.0 / sr)
+        valid = (freqs >= 50.0) & (freqs <= 5000.0)
+        freqs = freqs[valid]
+        if freqs.size == 0:
+            return None
+        midi = 69 + 12 * np.log2(freqs / 440.0)
+        pitch_class = np.round(midi).astype(int) % 12
+
+        profile = np.zeros(12, dtype=float)
+        window = np.hanning(frame_size)
+        for start in range(0, mono.size - frame_size, hop):
+            frame = mono[start : start + frame_size]
+            spectrum = np.fft.rfft(frame * window)
+            magnitudes = np.abs(spectrum)[valid]
+            if magnitudes.size == 0:
+                continue
+            np.add.at(profile, pitch_class, magnitudes)
+
+        if profile.sum() <= 0:
+            return None
+        profile /= np.linalg.norm(profile) + 1e-9
+
+        major_profile = np.array(
+            [6.35, 2.23, 3.48, 2.33, 4.38, 4.09, 2.52, 5.19, 2.39, 3.66, 2.29, 2.88],
+            dtype=float,
+        )
+        minor_profile = np.array(
+            [6.33, 2.68, 3.52, 5.38, 2.60, 3.53, 2.54, 4.75, 3.98, 2.69, 3.34, 3.17],
+            dtype=float,
+        )
+        major_profile /= np.linalg.norm(major_profile) + 1e-9
+        minor_profile /= np.linalg.norm(minor_profile) + 1e-9
+
+        best_score = -1.0
+        best_key = None
+        for shift in range(12):
+            major_score = float(np.dot(profile, np.roll(major_profile, shift)))
+            if major_score > best_score:
+                best_score = major_score
+                best_key = (shift, False)
+            minor_score = float(np.dot(profile, np.roll(minor_profile, shift)))
+            if minor_score > best_score:
+                best_score = minor_score
+                best_key = (shift, True)
+
+        if best_key is None:
+            return None
+        shift, is_minor = best_key
+        key_names = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
+        key_name = key_names[shift] + ("m" if is_minor else "")
+        return self._key_to_camelot(key_name)
+
+    def _key_to_camelot(self, key_name: str) -> str | None:
+        key_name = key_name.strip()
+        mapping = {
+            "C": "8B",
+            "G": "9B",
+            "D": "10B",
+            "A": "11B",
+            "E": "12B",
+            "B": "1B",
+            "F#": "2B",
+            "C#": "3B",
+            "G#": "4B",
+            "D#": "5B",
+            "A#": "6B",
+            "F": "7B",
+            "Am": "8A",
+            "Em": "9A",
+            "Bm": "10A",
+            "F#m": "11A",
+            "C#m": "12A",
+            "G#m": "1A",
+            "D#m": "2A",
+            "A#m": "3A",
+            "Fm": "4A",
+            "Cm": "5A",
+            "Gm": "6A",
+            "Dm": "7A",
+        }
+        return mapping.get(key_name)
+
+    def _read_audio_with_rate(self, path: Path) -> tuple[np.ndarray, int] | None:
+        try:
+            import numpy as np
+        except ModuleNotFoundError:
+            return None
+
+        try:
+            import soundfile as sf
+        except ModuleNotFoundError:
+            sf = None
+
+        if sf is not None:
+            try:
+                data, sr = sf.read(path, always_2d=True, dtype="float32")
+                return data, int(sr)
+            except Exception:
+                pass
+
+        if path.suffix.lower() == ".wav":
+            try:
+                import wave
+
+                with wave.open(str(path), "rb") as wav:
+                    frames = wav.readframes(wav.getnframes())
+                    channels = wav.getnchannels()
+                    sample_width = wav.getsampwidth()
+                    dtype = {1: np.int8, 2: np.int16, 4: np.int32}.get(sample_width)
+                    if dtype is None:
+                        return None
+                    data = np.frombuffer(frames, dtype=dtype).astype(np.float32)
+                    if channels > 1:
+                        data = data.reshape(-1, channels)
+                    else:
+                        data = data.reshape(-1, 1)
+                    max_val = float(np.iinfo(dtype).max)
+                    return data / max_val, wav.getframerate()
+            except Exception:
+                return None
+
+        try:
+            from pydub import AudioSegment
+        except ModuleNotFoundError:
+            return None
+
+        try:
+            segment = AudioSegment.from_file(path)
+        except Exception:
+            return None
+
+        samples = np.array(segment.get_array_of_samples())
+        channels = segment.channels or 1
+        if channels > 1:
+            samples = samples.reshape(-1, channels)
+        else:
+            samples = samples.reshape(-1, 1)
+        max_val = float(1 << (8 * segment.sample_width - 1))
+        if max_val == 0:
+            return None
+        return samples.astype(np.float32) / max_val, int(segment.frame_rate)
+
+    def _apply_computed_metadata(
+        self, path: Path, key: str | None = None, bpm: int | None = None
+    ) -> None:
+        tags = self._read_tags(path)
+        existing_key = self._coerce_text(tags.get("comments"))
+        existing_bpm = self._coerce_text(tags.get("bpm"))
+        name_key, name_bpm, base_parts = self._extract_filename_metadata(path.stem)
+
+        merged_key = key or existing_key or name_key
+        merged_bpm = bpm if bpm is not None else existing_bpm or name_bpm
+        if bpm is None and isinstance(merged_bpm, str) and merged_bpm.isdigit():
+            merged_bpm = int(merged_bpm)
+
+        if key is not None:
+            tags["comments"] = key
+        if bpm is not None:
+            tags["bpm"] = str(bpm)
+        self._write_tags(path, key=key, bpm=bpm)
+
+        new_path = self._rename_track_file(path, base_parts, merged_key, merged_bpm)
+        if new_path is None:
+            new_path = path
+        self._current_path = new_path
+
+        if merged_key is not None:
+            tags["comments"] = merged_key
+        if merged_bpm is not None:
+            tags["bpm"] = str(merged_bpm)
+
+        self._update_cached_tags_after_write(path, new_path, tags)
+        self._update_now_playing(new_path, tags)
+        self._update_track_row_metadata(
+            self._current_row, new_path, merged_key, merged_bpm
+        )
+
+    def _extract_filename_metadata(
+        self, stem: str
+    ) -> tuple[str | None, str | None, list[str]]:
+        key_pattern = re.compile(r"^(1[0-2]|[1-9])[AB]$")
+        bpm_pattern = re.compile(r"^\d{2,3}$")
+        parts = stem.split(" - ") if stem else []
+        key_value = None
+        bpm_value = None
+        trim_index = len(parts)
+        if parts and bpm_pattern.match(parts[-1]):
+            bpm_value = parts[-1]
+            trim_index = min(trim_index, len(parts) - 1)
+            if len(parts) >= 2 and key_pattern.match(parts[-2]):
+                key_value = parts[-2]
+                trim_index = min(trim_index, len(parts) - 2)
+        elif parts and key_pattern.match(parts[-1]):
+            key_value = parts[-1]
+            trim_index = min(trim_index, len(parts) - 1)
+        base_parts = parts[:trim_index]
+        return key_value, bpm_value, base_parts
+
+    def _rename_track_file(
+        self,
+        path: Path,
+        base_parts: list[str],
+        key: str | None,
+        bpm: int | str | None,
+    ) -> Path | None:
+        if key is None and bpm is None:
+            return path
+        parts = list(base_parts)
+        if key is not None:
+            parts.append(key)
+        if bpm is not None:
+            parts.append(str(bpm))
+        if not parts:
+            return path
+        new_stem = " - ".join(parts)
+        new_path = path.with_name(f"{new_stem}{path.suffix}")
+        if new_path == path:
+            return path
+        try:
+            new_path = path.rename(new_path)
+        except OSError:
+            QtWidgets.QMessageBox.warning(
+                self,
+                "Rename failed",
+                "Unable to rename the file with the computed metadata.",
+            )
+            return None
+        return new_path
+
+    def _write_tags(
+        self, path: Path, key: str | None = None, bpm: int | None = None
+    ) -> None:
+        if key is None and bpm is None:
+            return
+        try:
+            audio_easy = MutagenFile(path, easy=True)
+        except Exception:
+            audio_easy = None
+        if audio_easy is not None:
+            if key is not None:
+                for tag in ("comment", "comments"):
+                    try:
+                        audio_easy[tag] = [key]
+                    except Exception:
+                        continue
+            if bpm is not None:
+                try:
+                    audio_easy["bpm"] = [str(bpm)]
+                except Exception:
+                    pass
+            try:
+                audio_easy.save()
+            except Exception:
+                pass
+        try:
+            from mutagen.id3 import COMM, ID3, TBPM, TKEY
+        except Exception:
+            return
+        try:
+            audio_full = MutagenFile(path)
+        except Exception:
+            return
+        tags = getattr(audio_full, "tags", None)
+        if isinstance(tags, ID3):
+            if key is not None:
+                tags.setall(
+                    "COMM", [COMM(encoding=3, lang="eng", desc="Key", text=key)]
+                )
+                tags["TKEY"] = TKEY(encoding=3, text=key)
+            if bpm is not None:
+                tags["TBPM"] = TBPM(encoding=3, text=str(bpm))
+            try:
+                audio_full.save()
+            except Exception:
+                return
+
+    def _update_cached_tags_after_write(
+        self, old_path: Path, new_path: Path, tags: dict[str, str | bytes | None]
+    ) -> None:
+        if old_path != new_path:
+            old_key = self._cache_key(old_path)
+            entry = self._tags_cache.pop(old_key, None)
+            if isinstance(entry, dict):
+                self._tags_cache[self._cache_key(new_path)] = entry
+        self._store_cached_tags(new_path, tags)
+        self._save_cache()
+
+    def _update_track_row_metadata(
+        self,
+        row: int | None,
+        path: Path,
+        key: str | None,
+        bpm: int | str | None,
+    ) -> None:
+        if self._tracks_table is None or row is None:
+            return
+        cover_item = self._tracks_table.item(row, 0)
+        if cover_item is not None:
+            cover_item.setData(QtCore.Qt.UserRole, str(path))
+        if bpm is not None:
+            bpm_item = self._tracks_table.item(row, 5)
+            if bpm_item is not None:
+                bpm_item.setText(str(bpm))
+        if key is not None:
+            key_item = self._tracks_table.item(row, 6)
+            if key_item is not None:
+                key_item.setText(key)
+                normalized_key = self._normalize_camelot_key(key)
+                key_item.setData(QtCore.Qt.UserRole, normalized_key or "")
+                key_color = self._camelot_color(normalized_key)
+                if key_color is not None:
+                    key_item.setBackground(key_color)
 
     def _update_now_playing(
         self, path: Path, tags: dict[str, str | bytes | None]
