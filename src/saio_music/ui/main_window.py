@@ -152,6 +152,8 @@ class MvsepWorker(QtCore.QObject):
             self.finished.emit(False, "MVSEP did not finish in time.")
             return
 
+        acapella_downloaded = False
+        source_stem = self._path.stem
         for file_info in files_to_download:
             if self._cancelled:
                 self.finished.emit(False, "Canceled.")
@@ -160,21 +162,34 @@ class MvsepWorker(QtCore.QObject):
             filename = str(file_info.get("download", ""))
             if not url or not filename:
                 continue
-            self.status.emit(f"Downloading {filename}...")
+            if "vocals" not in filename.lower():
+                continue
+            target_name = f"{source_stem} (Acapella).mp3"
+            target_path = self._output_dir / target_name
+            counter = 1
+            while target_path.exists():
+                target_path = (
+                    self._output_dir / f"{source_stem} (Acapella {counter}).mp3"
+                )
+                counter += 1
+            self.status.emit(f"Downloading {target_path.name}...")
             try:
                 download = requests.get(url, stream=True, timeout=60)
                 download.raise_for_status()
-                output_path = self._output_dir / filename
-                with output_path.open("wb") as handle:
+                with target_path.open("wb") as handle:
                     for chunk in download.iter_content(chunk_size=1024 * 1024):
                         if self._cancelled:
                             self.finished.emit(False, "Canceled.")
                             return
                         if chunk:
                             handle.write(chunk)
+                acapella_downloaded = True
             except Exception as exc:
                 self.finished.emit(False, f"Download failed: {exc}")
                 return
+        if not acapella_downloaded:
+            self.finished.emit(False, "No vocals file returned by MVSEP.")
+            return
 
         self.finished.emit(True, "MVSEP download complete.")
 
