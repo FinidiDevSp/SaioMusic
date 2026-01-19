@@ -1209,7 +1209,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 pos_index, QtWidgets.QTableWidgetItem("POS")
             )
             for row in range(self._tracks_table.rowCount()):
-                item = QtWidgets.QTableWidgetItem(str(row + 1))
+                item = QtWidgets.QTableWidgetItem("")
                 item.setTextAlignment(QtCore.Qt.AlignCenter)
                 self._tracks_table.setItem(row, pos_index, item)
             self._tracks_table.setColumnWidth(pos_index, 60)
