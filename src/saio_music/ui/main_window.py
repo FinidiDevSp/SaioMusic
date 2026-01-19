@@ -579,7 +579,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 "GENRE",
                 "TEMPO",
                 "KEY RESULT",
-                "ENERGY",
+                "DURATION",
             ]
         )
         table.verticalHeader().setVisible(False)
@@ -1344,7 +1344,9 @@ class MainWindow(QtWidgets.QMainWindow):
         painter.end()
         return QtGui.QIcon(pixmap)
 
-    def _play_track(self, path: Path, tags: dict[str, str | bytes | None]) -> None:
+    def _play_track(
+        self, path: Path, tags: dict[str, str | bytes | float | None]
+    ) -> None:
         self._player.setSource(QtCore.QUrl.fromLocalFile(str(path)))
         self._player.play()
         self._current_path = path
@@ -1841,7 +1843,10 @@ class MainWindow(QtWidgets.QMainWindow):
                 return
 
     def _update_cached_tags_after_write(
-        self, old_path: Path, new_path: Path, tags: dict[str, str | bytes | None]
+        self,
+        old_path: Path,
+        new_path: Path,
+        tags: dict[str, str | bytes | float | None],
     ) -> None:
         if old_path != new_path:
             old_key = self._cache_key(old_path)
@@ -1878,7 +1883,7 @@ class MainWindow(QtWidgets.QMainWindow):
                     key_item.setBackground(key_color)
 
     def _update_now_playing(
-        self, path: Path, tags: dict[str, str | bytes | None]
+        self, path: Path, tags: dict[str, str | bytes | float | None]
     ) -> None:
         title = self._coerce_text(tags.get("title")) or ""
         artist = self._coerce_text(tags.get("artist")) or path.stem
@@ -2124,13 +2129,21 @@ class MainWindow(QtWidgets.QMainWindow):
         cover_item.setTextAlignment(QtCore.Qt.AlignCenter)
         self._tracks_table.setItem(row, 0, cover_item)
 
-        artist = tags.get("artist") or path.stem
-        title = tags.get("title") or ""
-        label = tags.get("label") or ""
-        genre = tags.get("genre") or ""
-        tempo = tags.get("bpm") or ""
-        key_result = tags.get("comments") or ""
-        energy = "0"
+        artist = self._coerce_text(tags.get("artist")) or path.stem
+        title = self._coerce_text(tags.get("title")) or ""
+        label = self._coerce_text(tags.get("label")) or ""
+        genre = self._coerce_text(tags.get("genre")) or ""
+        tempo = self._coerce_text(tags.get("bpm")) or ""
+        key_result = self._coerce_text(tags.get("comments")) or ""
+        duration_text = "--:--"
+        duration_value = tags.get("duration")
+        if isinstance(duration_value, str):
+            try:
+                duration_value = float(duration_value)
+            except ValueError:
+                duration_value = None
+        if isinstance(duration_value, int | float):
+            duration_text = self._format_time(int(duration_value * 1000))
 
         self._tracks_table.setItem(row, 1, QtWidgets.QTableWidgetItem(artist))
         self._tracks_table.setItem(row, 2, QtWidgets.QTableWidgetItem(title))
@@ -2152,12 +2165,14 @@ class MainWindow(QtWidgets.QMainWindow):
             key_item.setBackground(key_color)
         self._tracks_table.setItem(row, 6, key_item)
 
-        energy_item = QtWidgets.QTableWidgetItem(energy)
-        energy_item.setTextAlignment(QtCore.Qt.AlignCenter)
-        self._tracks_table.setItem(row, 7, energy_item)
+        duration_item = QtWidgets.QTableWidgetItem(duration_text)
+        duration_item.setTextAlignment(QtCore.Qt.AlignCenter)
+        self._tracks_table.setItem(row, 7, duration_item)
 
-    def _read_tags(self, path: Path) -> dict[str, str | bytes | None]:
-        cached = self._get_cached_tags(path)
+    def _read_tags(self, path: Path) -> dict[str, str | bytes | float | None]:
+        cached: dict[str, str | bytes | float | None] | None = self._get_cached_tags(
+            path
+        )
         if cached is not None:
             if cached.get("cover_data") is None:
                 try:
@@ -2169,6 +2184,16 @@ class MainWindow(QtWidgets.QMainWindow):
                     if cover_data:
                         cached["cover_data"] = cover_data
                         self._store_cached_tags(path, cached)
+            if cached.get("duration") is None:
+                try:
+                    audio_full = MutagenFile(path)
+                except Exception:
+                    audio_full = None
+                if audio_full is not None:
+                    length = getattr(getattr(audio_full, "info", None), "length", None)
+                    if length is not None:
+                        cached["duration"] = float(length)
+                        self._store_cached_tags(path, cached)
             if not cached.get("genre"):
                 try:
                     audio = MutagenFile(path, easy=True)
@@ -2179,7 +2204,7 @@ class MainWindow(QtWidgets.QMainWindow):
                     self._store_cached_tags(path, cached)
             return cached
 
-        info: dict[str, str | bytes | None] = {
+        info: dict[str, str | bytes | float | None] = {
             "artist": None,
             "title": None,
             "label": None,
@@ -2187,6 +2212,7 @@ class MainWindow(QtWidgets.QMainWindow):
             "bpm": None,
             "comments": None,
             "cover_data": None,
+            "duration": None,
         }
 
         try:
@@ -2211,11 +2237,16 @@ class MainWindow(QtWidgets.QMainWindow):
             if not info["comments"]:
                 info["comments"] = self._extract_comment(audio_full)
             info["cover_data"] = self._extract_cover(audio_full)
+            length = getattr(getattr(audio_full, "info", None), "length", None)
+            if length is not None:
+                info["duration"] = float(length)
 
         self._store_cached_tags(path, info)
         return info
 
-    def _get_cached_tags(self, path: Path) -> dict[str, str | bytes | None] | None:
+    def _get_cached_tags(
+        self, path: Path
+    ) -> dict[str, str | bytes | float | None] | None:
         key = self._cache_key(path)
         entry = self._tags_cache.get(key)
         if not isinstance(entry, dict):
@@ -2235,6 +2266,16 @@ class MainWindow(QtWidgets.QMainWindow):
             except Exception:
                 cover_bytes = None
 
+        duration_value = entry.get("duration")
+        duration = None
+        if isinstance(duration_value, int | float):
+            duration = float(duration_value)
+        elif isinstance(duration_value, str):
+            try:
+                duration = float(duration_value)
+            except ValueError:
+                duration = None
+
         return {
             "artist": self._coerce_text(entry.get("artist")),
             "title": self._coerce_text(entry.get("title")),
@@ -2243,10 +2284,11 @@ class MainWindow(QtWidgets.QMainWindow):
             "bpm": self._coerce_text(entry.get("bpm")),
             "comments": self._coerce_text(entry.get("comments")),
             "cover_data": cover_bytes,
+            "duration": duration,
         }
 
     def _store_cached_tags(
-        self, path: Path, info: dict[str, str | bytes | None]
+        self, path: Path, info: dict[str, str | bytes | float | None]
     ) -> None:
         try:
             mtime_ns = path.stat().st_mtime_ns
@@ -2271,6 +2313,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 "bpm": info.get("bpm"),
                 "comments": info.get("comments"),
                 "cover_data": cover_encoded,
+                "duration": info.get("duration"),
             }
         )
         self._tags_cache[self._cache_key(path)] = entry
