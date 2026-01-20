@@ -1237,6 +1237,13 @@ class MainWindow(QtWidgets.QMainWindow):
     def _enable_pos_delegate(self, pos_index: int) -> None:
         if self._tracks_table is None:
             return
+        for row in range(self._tracks_table.rowCount()):
+            item = self._tracks_table.item(row, pos_index)
+            if item is None:
+                continue
+            text = item.text().strip()
+            if text.isdigit():
+                item.setData(QtCore.Qt.DisplayRole, int(text))
         delegate = PosSpinBoxDelegate(self._tracks_table)
         delegate.set_maximum(self._tracks_table.rowCount())
         self._tracks_table.setItemDelegateForColumn(pos_index, delegate)

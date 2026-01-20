@@ -47,7 +47,7 @@ class PosSpinBoxDelegate(QtWidgets.QStyledItemDelegate):
     ) -> None:
         if isinstance(editor, QtWidgets.QSpinBox):
             value = editor.value()
-            model.setData(index, str(value), QtCore.Qt.DisplayRole)
+            model.setData(index, value, QtCore.Qt.DisplayRole)
             self.posEdited.emit(index.row(), index.column())
 
     def paint(
