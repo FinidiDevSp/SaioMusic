@@ -20,12 +20,12 @@ classifiers = [
   "Operating System :: OS Independent"
 ]
 dependencies = [
-  "PySide6>=6.7",
+  "PySide6>=6.11.0",
   "mutagen>=1.47",
-  "numpy>=1.26",
-  "soundfile>=0.12",
-  "pydub>=0.25",
-  "requests>=2.32"
+  "numpy>=2.4.4",
+  "soundfile>=0.13.1",
+  "pydub>=0.25.1",
+  "requests>=2.33.1"
 ]
 
 [project.optional-dependencies]
